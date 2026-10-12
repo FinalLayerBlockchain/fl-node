@@ -315,7 +315,7 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 			delete(snap.RecentForkHashes, number-limit)
 		}
 		// Resolve the authorization key and check against signers
-		validator, err := ecrecover(header, s.sigCache, chainConfig.ChainID)
+		validator, err := recoverSealer(header, s.sigCache, chainConfig.ChainID)
 		if err != nil {
 			return nil, err
 		}

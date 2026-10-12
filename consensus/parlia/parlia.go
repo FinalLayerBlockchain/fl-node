@@ -37,7 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
@@ -59,15 +59,17 @@ const (
 	lorentzEpochLength   uint64 = 500  // Epoch length starting from the Lorentz hard fork
 	maxwellEpochLength   uint64 = 1000 // Epoch length starting from the Maxwell hard fork
 	defaultBlockInterval uint64 = 3000 // Default block interval in milliseconds
-	lorentzBlockInterval uint64 = 1500 // Block interval starting from the Lorentz hard fork
-	maxwellBlockInterval uint64 = 750  // Block interval starting from the Maxwell hard fork
-	fermiBlockInterval   uint64 = 450  // Block interval starting from the Fermi hard fork
+	// Final Layer keeps 3 second blocks on every fork: each header carries a
+	// ~7.2 KB post-quantum seal, so faster blocks would mostly grow the chain.
+	lorentzBlockInterval uint64 = 3000 // Block interval starting from the Lorentz hard fork
+	maxwellBlockInterval uint64 = 3000 // Block interval starting from the Maxwell hard fork
+	fermiBlockInterval   uint64 = 3000 // Block interval starting from the Fermi hard fork
 	defaultTurnLength    uint8  = 1    // Default consecutive number of blocks a validator receives priority for block production
 
-	extraVanity      = 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
-	extraSeal        = 65 // Fixed number of extra-data suffix bytes reserved for signer seal
-	nextForkHashSize = 4  // Fixed number of extra-data suffix bytes reserved for nextForkHash.
-	turnLengthSize   = 1  // Fixed number of extra-data suffix bytes reserved for turnLength
+	extraVanity      = 32          // Fixed number of extra-data prefix bytes reserved for signer vanity
+	extraSeal        = pq.SealSize // Final Layer: ML-DSA seal (scheme || pubkey || signature) at the end of extra-data
+	nextForkHashSize = 4           // Fixed number of extra-data suffix bytes reserved for nextForkHash.
+	turnLengthSize   = 1           // Fixed number of extra-data suffix bytes reserved for turnLength
 
 	validatorBytesLengthBeforeLuban = common.AddressLength
 	validatorBytesLength            = common.AddressLength + types.BLSPublicKeyLength
@@ -199,31 +201,6 @@ func isToSystemContract(to common.Address) bool {
 	return systemContracts[to]
 }
 
-// ecrecover extracts the Ethereum account address from a signed header.
-func ecrecover(header *types.Header, sigCache *lru.Cache[common.Hash, common.Address], chainId *big.Int) (common.Address, error) {
-	// If the signature's already cached, return that
-	hash := header.Hash()
-	if address, known := sigCache.Get(hash); known {
-		return address, nil
-	}
-	// Retrieve the signature from the header extra-data
-	if len(header.Extra) < extraSeal {
-		return common.Address{}, errMissingSignature
-	}
-	signature := header.Extra[len(header.Extra)-extraSeal:]
-
-	// Recover the public key and the Ethereum address
-	pubkey, err := crypto.Ecrecover(types.SealHash(header, chainId).Bytes(), signature)
-	if err != nil {
-		return common.Address{}, err
-	}
-	var signer common.Address
-	copy(signer[:], crypto.Keccak256(pubkey[1:])[12:])
-
-	sigCache.Add(hash, signer)
-	return signer, nil
-}
-
 // ParliaRLP returns the rlp bytes which needs to be signed for the parlia
 // sealing. The RLP to sign consists of the entire header apart from the 65 byte signature
 // contained at the end of the extra data.
@@ -329,7 +306,16 @@ func (p *Parlia) IsSystemTransaction(tx *types.Transaction, header *types.Header
 	if err != nil {
 		return false, errors.New("UnAuthorized transaction")
 	}
-	return sender == header.Coinbase, nil
+	if sender != header.Coinbase {
+		return false, nil
+	}
+	// Final Layer: a system transaction must be signed by the producer's own
+	// consensus key, i.e. the carried public key derives the coinbase address.
+	scheme, pk, _, ok := tx.PQAuth()
+	if !ok || pq.Address(scheme, pk) != header.Coinbase {
+		return false, errPQSystemTx
+	}
+	return true, nil
 }
 
 func (p *Parlia) IsSystemContract(to *common.Address) bool {
@@ -480,98 +466,9 @@ func (p *Parlia) verifyVoteAttestation(chain consensus.ChainHeaderReader, header
 	if attestation == nil {
 		return nil
 	}
-	if attestation.Data == nil {
-		return errors.New("invalid attestation, vote data is nil")
-	}
-	if len(attestation.Extra) > types.MaxAttestationExtraLength {
-		return fmt.Errorf("invalid attestation, too large extra length: %d", len(attestation.Extra))
-	}
-	if attestation.Data.SourceNumber >= attestation.Data.TargetNumber {
-		return errors.New("invalid attestation, SourceNumber not lower than TargetNumber")
-	}
-
-	// === Step 2: Verify source block ===
-	parent, err := p.getParent(chain, header, parents)
-	if err != nil {
-		return err
-	}
-	// The source block should be the highest justified block.
-	sourceNumber := attestation.Data.SourceNumber
-	sourceHash := attestation.Data.SourceHash
-	headers := []*types.Header{parent}
-	if len(parents) > 0 {
-		headers = parents
-	}
-	justifiedBlockNumber, justifiedBlockHash, err := p.GetJustifiedNumberAndHash(chain, headers)
-	if err != nil {
-		return errors.New("unexpected error when getting the highest justified number and hash")
-	}
-	if sourceNumber != justifiedBlockNumber || sourceHash != justifiedBlockHash {
-		return fmt.Errorf("invalid attestation, source mismatch, expected block: %d, hash: %s; real block: %d, hash: %s",
-			justifiedBlockNumber, justifiedBlockHash, sourceNumber, sourceHash)
-	}
-
-	// === Step 3: Verify target block ===
-	targetNumber := attestation.Data.TargetNumber
-	targetHash := attestation.Data.TargetHash
-	match := false
-	ancestor := parent
-	ancestorParents := trimParents(parents)
-	for range p.GetAncestorGenerationDepth(header) {
-		if targetNumber == ancestor.Number.Uint64() && targetHash == ancestor.Hash() {
-			match = true
-			break
-		}
-
-		ancestor, err = p.getParent(chain, ancestor, ancestorParents)
-		if err != nil {
-			return err
-		}
-		ancestorParents = trimParents(ancestorParents)
-	}
-	if !match {
-		return fmt.Errorf("invalid attestation, target mismatch, real block: %d, hash: %s", targetNumber, targetHash)
-	}
-
-	// === Step 4: Check quorum ===
-	// The snapshot should be the targetNumber-1 block's snapshot.
-	snap, err := p.snapshot(chain, ancestor.Number.Uint64()-1, ancestor.ParentHash, ancestorParents)
-	if err != nil {
-		return err
-	}
-	// Filter out valid validator from attestation.
-	validators := snap.validators()
-	validatorsBitSet := bitset.From([]uint64{uint64(attestation.VoteAddressSet)})
-	if validatorsBitSet.Count() > uint(len(validators)) {
-		return errors.New("invalid attestation, vote number larger than validators number")
-	}
-	votedAddrs := make([]bls.PublicKey, 0, validatorsBitSet.Count())
-	for index, val := range validators {
-		if !validatorsBitSet.Test(uint(index)) {
-			continue
-		}
-
-		voteAddr, err := bls.PublicKeyFromBytes(snap.Validators[val].VoteAddress[:])
-		if err != nil {
-			return fmt.Errorf("BLS public key converts failed: %v", err)
-		}
-		votedAddrs = append(votedAddrs, voteAddr)
-	}
-	// The valid voted validators should be no less than 2/3 validators.
-	if len(votedAddrs) < cmath.CeilDiv(len(snap.Validators)*2, 3) {
-		return errors.New("invalid attestation, not enough validators voted")
-	}
-
-	// === Step 5: Signature verification ===
-	aggSig, err := bls.SignatureFromBytes(attestation.AggSignature[:])
-	if err != nil {
-		return fmt.Errorf("BLS signature converts failed: %v", err)
-	}
-	if !aggSig.FastAggregateVerify(votedAddrs, attestation.Data.Hash()) {
-		return errors.New("invalid attestation, signature verify failed")
-	}
-
-	return nil
+	// Final Layer: BLS vote attestations are a classical signature scheme
+	// and are never accepted.
+	return errFastFinalityOff
 }
 
 // verifyHeader checks whether a header conforms to the consensus rules.The
@@ -961,7 +858,7 @@ func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Hea
 	}
 
 	// Resolve the authorization key and check against validators
-	signer, err := ecrecover(header, p.signatures, p.chainConfig.ChainID)
+	signer, err := recoverSealer(header, p.signatures, p.chainConfig.ChainID)
 	if err != nil {
 		return err
 	}
@@ -1044,6 +941,10 @@ func (p *Parlia) prepareTurnLength(chain consensus.ChainHeaderReader, header *ty
 
 // assembleVoteAttestation collects votes and assembles the vote attestation into the block header.
 func (p *Parlia) assembleVoteAttestation(chain consensus.ChainHeaderReader, header *types.Header) error {
+	// Final Layer: BLS fast finality is disabled; never attach attestations.
+	if true {
+		return nil
+	}
 	// === Step 1: Preconditions ===
 	if !p.chainConfig.IsLuban(header.Number) || header.Number.Uint64() < 3 || p.VotePool == nil {
 		return nil
@@ -1487,6 +1388,9 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	if p.chainConfig.IsFeynman(header.Number, header.Time) && isBreatheBlock(parent.Time, header.Time) {
 		// we should avoid update validators in the Feynman upgrade block
 		if !p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
+			if err := p.distributeStakingInflation(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
+				return err
+			}
 			if err := p.updateValidatorSetV2(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
 				return err
 			}
@@ -1585,6 +1489,9 @@ func (p *Parlia) finalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	if p.chainConfig.IsFeynman(header.Number, header.Time) && isBreatheBlock(parent.Time, header.Time) {
 		// we should avoid update validators in the Feynman upgrade block
 		if !p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
+			if err := p.distributeStakingInflation(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
+				return nil, nil, err
+			}
 			if err := p.updateValidatorSetV2(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
 				return nil, nil, err
 			}
@@ -1629,6 +1536,10 @@ func (p *Parlia) IsActiveValidatorAt(chain consensus.ChainHeaderReader, header *
 
 // VerifyVote will verify: 1. If the vote comes from valid validators 2. If the vote's sourceNumber and sourceHash are correct
 func (p *Parlia) VerifyVote(chain consensus.ChainHeaderReader, vote *types.VoteEnvelope) error {
+	// Final Layer: BLS votes are never accepted.
+	if true {
+		return errFastFinalityOff
+	}
 	targetNumber := vote.Data.TargetNumber
 	targetHash := vote.Data.TargetHash
 	header := chain.GetVerifiedBlockByHash(targetHash)
@@ -2118,7 +2029,20 @@ func (p *Parlia) applyTransaction(
 	tracer *tracing.Hooks,
 ) (applyErr error) {
 	nonce := state.GetNonce(msg.From)
-	expectedTx := types.NewTransaction(nonce, *msg.To, msg.Value.ToBig(), msg.GasLimit, msg.GasPrice.ToBig(), msg.Data)
+	// Final Layer: system transactions are post-quantum transactions from the
+	// block producer with zero gas price.
+	expectedTx := types.NewTx(&types.PQTx{
+		ChainID:   new(big.Int).Set(p.chainConfig.ChainID),
+		Nonce:     nonce,
+		GasTipCap: msg.GasPrice.ToBig(),
+		GasFeeCap: msg.GasPrice.ToBig(),
+		Gas:       msg.GasLimit,
+		To:        msg.To,
+		Value:     msg.Value.ToBig(),
+		Data:      msg.Data,
+		From:      msg.From,
+		Scheme:    uint8(pq.SchemeMLDSA87),
+	})
 	expectedHash := p.signer.Hash(expectedTx)
 
 	switch mode {
@@ -2137,6 +2061,12 @@ func (p *Parlia) applyTransaction(
 			return errors.New("supposed to get a actual transaction, but get none")
 		}
 		actualTx := (*receivedTxs)[0]
+		if actualTx.Type() != types.PQTxType {
+			return errPQSystemTx
+		}
+		if scheme, pk, _, _ := actualTx.PQAuth(); pq.Address(scheme, pk) != msg.From {
+			return errPQSystemTx
+		}
 		if !bytes.Equal(p.signer.Hash(actualTx).Bytes(), expectedHash.Bytes()) {
 			return fmt.Errorf("expected tx hash %v, get %v, nonce %d, to %s, value %s, gas %d, gasPrice %s, data %s", expectedHash.String(), actualTx.Hash().String(),
 				expectedTx.Nonce(),

@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -60,6 +61,10 @@ type ValidationFunction func(tx *types.Transaction, head *types.Header, signer t
 // This check is public to allow different transaction pools to check the basic
 // rules without duplicating code and running the risk of missed updates.
 func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types.Signer, opts *ValidationOptions) error {
+	// Final Layer: only post-quantum signed transactions exist.
+	if tx.Type() != types.PQTxType {
+		return fmt.Errorf("%w: %v", core.ErrTxTypeNotSupported, types.ErrClassicalSignatureDisabled)
+	}
 	// Ensure transactions not implemented by the calling pool are rejected
 	if opts.Accept&(1<<tx.Type()) == 0 {
 		return fmt.Errorf("%w: tx type %v not supported by this pool", core.ErrTxTypeNotSupported, tx.Type())
@@ -129,6 +134,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam)
 	if err != nil {
 		return err
+	}
+	if scheme, _, _, ok := tx.PQAuth(); ok {
+		intrGas.RegularGas += pq.AuthGas(scheme)
 	}
 	if tx.Gas() < intrGas.RegularGas {
 		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas.RegularGas)
@@ -259,6 +267,14 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	if err != nil {
 		log.Error("Transaction sender recovery failed", "err", err)
 		return err
+	}
+	// Final Layer: the carried public key must currently control the sender.
+	if scheme, pk, _, ok := tx.PQAuth(); ok {
+		if err := core.CheckPQAuthorization(opts.State, from, scheme, pk); err != nil {
+			return err
+		}
+	} else {
+		return types.ErrClassicalSignatureDisabled
 	}
 	next := opts.State.GetNonce(from)
 	if next > tx.Nonce() {

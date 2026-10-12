@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 )
@@ -224,6 +225,12 @@ type Message struct {
 	BlobHashes            []common.Hash
 	SetCodeAuthorizations []types.SetCodeAuthorization
 
+	// Final Layer post-quantum authorization. PQPubKey is non-nil exactly
+	// when the message comes from a PQ signed transaction; the key must be
+	// authorized for From (checked in preCheck).
+	PQScheme pq.Scheme
+	PQPubKey []byte
+
 	// When SkipNonceChecks is true, the message nonce is not checked against the
 	// account nonce in state.
 	//
@@ -287,6 +294,10 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 		SkipTransactionChecks: false,
 		BlobHashes:            tx.BlobHashes(),
 		BlobGasFeeCap:         blobGasFeeCap,
+	}
+	if scheme, pk, _, ok := tx.PQAuth(); ok {
+		msg.PQScheme = scheme
+		msg.PQPubKey = pk
 	}
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
 	if baseFee != nil {
@@ -450,6 +461,13 @@ func (st *stateTransition) preCheck() error {
 				msg.From.Hex(), stNonce)
 		}
 	}
+	// Final Layer: the public key of a PQ transaction must be the key that
+	// currently controls the sender account (key registry or default address).
+	if msg.PQPubKey != nil {
+		if err := CheckPQAuthorization(st.state, msg.From, msg.PQScheme, msg.PQPubKey); err != nil {
+			return err
+		}
+	}
 	isOsaka := st.evm.ChainConfig().IsOsaka(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	isAmsterdam := st.evm.ChainConfig().IsAmsterdam(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	if !msg.SkipTransactionChecks {
@@ -575,6 +593,14 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Final Layer: price the post-quantum public key and signature bytes.
+	if msg.PQPubKey != nil {
+		authGas := pq.AuthGas(msg.PQScheme)
+		if cost.RegularGas+authGas < cost.RegularGas {
+			return nil, ErrGasUintOverflow
+		}
+		cost.RegularGas += authGas
+	}
 	prior, sufficient := st.gasRemaining.Charge(cost)
 	if !sufficient {
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining.RegularGas, cost.RegularGas)
@@ -649,8 +675,13 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 			st.state.AddAddressToAccessList(addr)
 		}
 
-		// Execute the transaction's call.
-		ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
+		// Execute the transaction's call. A PQ transaction addressed to the key
+		// registry is a key rotation and is handled natively.
+		if msg.PQPubKey != nil && *msg.To == pq.RegistryAddress {
+			vmerr = st.applyPQRotation()
+		} else {
+			ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
+		}
 	}
 
 	// Record the gas used excluding gas refunds. This value represents the actual

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -50,6 +51,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/core/vote"
+	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
@@ -487,10 +489,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		votePool := vote.NewVotePool(eth.blockchain, posa)
 		eth.votePool = votePool
 		if parlia, ok := eth.engine.(*parlia.Parlia); ok {
-			if !config.Miner.DisableVoteAttestation {
-				// if there is no VotePool in Parlia Engine, the miner can't get votes for assembling
-				parlia.VotePool = votePool
-			}
+			// Final Layer: BLS fast-finality votes are disabled, so the engine
+			// never receives a vote pool and never assembles attestations.
+			_ = parlia
 		} else {
 			return nil, errors.New("Engine is not Parlia type")
 		}
@@ -502,6 +503,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 
 		if config.Miner.VoteEnable {
+			log.Warn("Final Layer: --vote is ignored, BLS fast finality votes are disabled")
+		}
+		if false {
 			conf := stack.Config()
 			blsPasswordPath := stack.ResolvePath(conf.BLSPasswordFile)
 			blsWalletPath := stack.ResolvePath(conf.BLSWalletDir)
@@ -787,12 +791,17 @@ func (s *Ethereum) StartMining() error {
 			return fmt.Errorf("etherbase missing: %v", err)
 		}
 		if parlia, ok := s.engine.(*parlia.Parlia); ok {
-			wallet, err := s.accountManager.Find(accounts.Account{Address: eb})
-			if wallet == nil || err != nil {
-				log.Error("Etherbase account unavailable locally", "err", err)
-				return fmt.Errorf("signer missing: %v", err)
+			// Final Layer: validators sign with a post-quantum ML-DSA key file
+			// (path in FL_PQ_VALIDATOR_KEY). No ECDSA keystore is used.
+			key, err := pq.LoadKeyFile(os.Getenv("FL_PQ_VALIDATOR_KEY"))
+			if err != nil {
+				log.Error("Post-quantum validator key unavailable", "err", err)
+				return fmt.Errorf("pq validator key: %v", err)
 			}
-			parlia.Authorize(eb, wallet.SignData, wallet.SignTx)
+			if key.Address() != eb {
+				return fmt.Errorf("pq validator key address %v does not match etherbase %v", key.Address(), eb)
+			}
+			parlia.AuthorizePQ(key)
 
 			// Start a goroutine to handle node ID registration after sync
 			go func() {

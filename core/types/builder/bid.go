@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"sync/atomic"
@@ -30,7 +31,15 @@ type BidArgs struct {
 	PayBidTxGasUsed uint64        `json:"payBidTxGasUsed"`
 }
 
+// ErrClassicalBidSignature is returned for every builder bid: bids are
+// authorized by ECDSA signatures, which Final Layer does not accept.
+var ErrClassicalBidSignature = errors.New("builder bids use classical (ECDSA) signatures and are disabled on Final Layer")
+
 func (b *BidArgs) EcrecoverSender() (common.Address, error) {
+	return common.Address{}, ErrClassicalBidSignature
+}
+
+func (b *BidArgs) ecrecoverSenderUnused() (common.Address, error) {
 	pk, err := crypto.SigToPub(b.RawBid.Hash().Bytes(), b.Signature)
 	if err != nil {
 		return common.Address{}, err
@@ -213,6 +222,10 @@ type BidBlockArgs struct {
 
 // EcrecoverSender recovers the builder address from the signature over BidBlock.Hash().
 func (b *BidBlockArgs) EcrecoverSender() (common.Address, error) {
+	return common.Address{}, ErrClassicalBidSignature
+}
+
+func (b *BidBlockArgs) ecrecoverSenderUnused() (common.Address, error) {
 	pk, err := crypto.SigToPub(b.BidBlock.Hash().Bytes(), b.Signature)
 	if err != nil {
 		return common.Address{}, err

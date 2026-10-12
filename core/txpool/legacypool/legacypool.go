@@ -300,7 +300,8 @@ func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 // FilterType returns whether the legacy pool supports the given transaction type.
 func (pool *LegacyPool) FilterType(kind byte) bool {
 	switch kind {
-	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.SetCodeTxType:
+	case types.PQTxType:
+		// Final Layer: only post-quantum signed transactions are pooled.
 		return true
 	default:
 		return false
@@ -568,10 +569,7 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptions{
 		Config: pool.chainconfig,
 		Accept: 0 |
-			1<<types.LegacyTxType |
-			1<<types.AccessListTxType |
-			1<<types.DynamicFeeTxType |
-			1<<types.SetCodeTxType,
+			1<<types.PQTxType,
 		MaxSize: txMaxSize,
 		MinTip:  pool.gasTip.Load().ToBig(),
 	}

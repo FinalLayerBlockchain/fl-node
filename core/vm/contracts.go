@@ -446,6 +446,7 @@ var (
 )
 
 func init() {
+	applyFinalLayerPrecompilePolicy()
 	for k := range PrecompiledContractsHomestead {
 		PrecompiledAddressesHomestead = append(PrecompiledAddressesHomestead, k)
 	}
