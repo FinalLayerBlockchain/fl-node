@@ -108,6 +108,18 @@ func (f *ForkChoice) ReorgNeeded(current *types.Header, extern *types.Header) (b
 	externNum, localNum := extern.Number.Uint64(), current.Number.Uint64()
 	if externNum < localNum {
 		reorg = true
+	} else if externNum == localNum && f.chain.Config().Parlia != nil {
+		// Final Layer: every node must order equal-TD siblings the same way.
+		// A random pick per node can leave two validators each on their own
+		// block, which the Parlia recents rule forbids them to extend, and
+		// the chain halts while the third validator is offline. The earlier
+		// millisecond timestamp wins, then the lower hash.
+		externMs, localMs := extern.MilliTimestamp(), current.MilliTimestamp()
+		if externMs != localMs {
+			reorg = externMs < localMs
+		} else {
+			reorg = extern.Hash().Cmp(current.Hash()) < 0
+		}
 	} else if externNum == localNum {
 		reorg = func() bool {
 			if extern.Time == current.Time {

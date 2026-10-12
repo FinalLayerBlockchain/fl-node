@@ -24,7 +24,8 @@ const (
 // a validator that sits on the other fork, and no new block is ever announced
 // to break the tie: the chain stalls for good. Re-sending the stale head lets
 // every node import the competing block, after which the normal fork choice
-// (earliest timestamp wins at equal difficulty) makes all nodes agree on one
+// (earliest millisecond timestamp, then lowest hash, wins at equal
+// difficulty and height; see core/forkchoice.go) makes all nodes agree on one
 // branch and the remaining in-turn validator can extend it.
 func (h *handler) staleHeadRebroadcastLoop() {
 	defer h.wg.Done()
@@ -42,6 +43,12 @@ func (h *handler) staleHeadRebroadcastLoop() {
 }
 
 func (h *handler) rebroadcastStaleHead() {
+	// A node that has not finished its initial sync always has an old head;
+	// pushing it to every peer every few seconds only wastes bandwidth. The
+	// stall this repairs is specific to Parlia.
+	if !h.synced.Load() || h.chain.Config().Parlia == nil {
+		return
+	}
 	head := h.chain.CurrentBlock()
 	if head == nil || head.Number.Sign() == 0 {
 		return
