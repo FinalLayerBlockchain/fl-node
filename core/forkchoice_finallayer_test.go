@@ -96,3 +96,18 @@ func TestFinalLayerForkChoiceNotGrindable(t *testing.T) {
 		}
 	}
 }
+
+// The rank of a block cannot be biased by the producer of its parent either:
+// re-signing the parent (a new parent hash) leaves the order of the children's
+// validators unchanged.
+func TestFinalLayerForkChoiceParentNotGrindable(t *testing.T) {
+	want := parliaTieRank(tieHeader(2, 1000, 0)).Cmp(parliaTieRank(tieHeader(3, 1000, 0)))
+	for i := 0; i < 1000; i++ {
+		a, b := tieHeader(2, 1000, 0), tieHeader(3, 1000, 0)
+		parent := common.BigToHash(big.NewInt(int64(i)))
+		a.ParentHash, b.ParentHash = parent, parent
+		if parliaTieRank(a).Cmp(parliaTieRank(b)) != want {
+			t.Fatalf("parent variant %d changed the order of the children", i)
+		}
+	}
+}

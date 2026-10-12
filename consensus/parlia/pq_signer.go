@@ -76,16 +76,17 @@ func PQSignerFns(key *pq.PrivateKey) (common.Address, SignerFn, SignerTxFn) {
 // pqTxFrom builds an unsigned PQ transaction carrying the payload of tx.
 func pqTxFrom(tx *types.Transaction, from common.Address, scheme pq.Scheme, chainID *big.Int, gas uint64) *types.Transaction {
 	return types.NewTx(&types.PQTx{
-		ChainID:   new(big.Int).Set(chainID),
-		Nonce:     tx.Nonce(),
-		GasTipCap: new(big.Int).Set(tx.GasTipCap()),
-		GasFeeCap: new(big.Int).Set(tx.GasFeeCap()),
-		Gas:       gas,
-		To:        tx.To(),
-		Value:     new(big.Int).Set(tx.Value()),
-		Data:      tx.Data(),
-		From:      from,
-		Scheme:    uint8(scheme),
+		ChainID:    new(big.Int).Set(chainID),
+		Nonce:      tx.Nonce(),
+		GasTipCap:  new(big.Int).Set(tx.GasTipCap()),
+		GasFeeCap:  new(big.Int).Set(tx.GasFeeCap()),
+		Gas:        gas,
+		To:         tx.To(),
+		Value:      new(big.Int).Set(tx.Value()),
+		Data:       tx.Data(),
+		AccessList: tx.AccessList(),
+		From:       from,
+		Scheme:     uint8(scheme),
 	})
 }
 

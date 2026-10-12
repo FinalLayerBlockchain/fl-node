@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"bytes"
 	"errors"
 	"math/big"
 	"testing"
@@ -148,5 +149,46 @@ func TestPQVerifyValidatorProofLayout(t *testing.T) {
 	txProof := append(append([]byte{byte(pq.SchemeMLDSA87)}, key.PublicKey()...), txSig...)
 	if out, _ := pc.Run(build(txProof)); out[31] != 0 {
 		t.Fatal("precompile accepted a transaction signature as a contract signature")
+	}
+}
+
+// Seals are deterministic, so sealing the same header twice gives the same
+// block; a second, different seal over the same header (a re-rolled randomized
+// signature, which would give a validator many block hashes to choose from in
+// fork choice) is slashable equivocation.
+func TestPQDoubleSignSameHeaderReseal(t *testing.T) {
+	chainID := big.NewInt(20261012)
+	key, _ := pq.GenerateKey()
+	h1 := pqSealedHeader(t, key, chainID, 100, common.Hash{1}, 7)
+	again := pqSealedHeader(t, key, chainID, 100, common.Hash{1}, 7)
+	if !bytes.Equal(h1, again) {
+		t.Fatal("sealing the same header twice gave different blocks")
+	}
+
+	// re-seal the same header with a randomized signature
+	h := new(types.Header)
+	if err := rlp.DecodeBytes(h1, h); err != nil {
+		t.Fatal(err)
+	}
+	sealHash := types.SealHash(h, chainID)
+	sig, err := key.Sign(pq.DomainSeal, sealHash.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkLen := len(key.PublicKey())
+	copy(h.Extra[len(h.Extra)-len(sig):], sig)
+	if _, err := pq.VerifySeal(h.Extra[len(h.Extra)-1-pkLen-len(sig):], sealHash.Bytes()); err != nil {
+		t.Fatalf("randomized re-seal does not verify: %v", err)
+	}
+	h2, err := rlp.EncodeToBytes(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := (&pqDoubleSignEvidence{}).Run(doubleSignInput(t, chainID, h1, h2))
+	if err != nil {
+		t.Fatalf("re-sealed header not accepted as double sign: %v", err)
+	}
+	if common.BytesToAddress(out[:20]) != key.Address() {
+		t.Fatal("wrong signer")
 	}
 }

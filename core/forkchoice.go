@@ -114,12 +114,12 @@ func (f *ForkChoice) ReorgNeeded(current *types.Header, extern *types.Header) (b
 		// A random pick per node can leave two validators each on their own
 		// block, which the Parlia recents rule forbids them to extend, and
 		// the chain halts while the third validator is offline.
-		// The order must also be impossible for the producer to influence:
-		// ML-DSA signing is randomized, so the block hash can be re-rolled by
-		// re-signing, and the timestamp is partly the producer's choice. The
-		// rank is therefore keccak256(parentHash || coinbase), fixed for each
-		// validator at each parent. Two blocks of the same validator on the
-		// same parent are a slashable double sign; any fixed order will do.
+		// The order must also be impossible for anyone to influence: not the
+		// producer (block hash, timestamp) and not the parent's producer (the
+		// parent hash). The rank is therefore keccak256(height || coinbase),
+		// fixed per validator per height. Two blocks of the same validator at
+		// the same height are slashable double signing (seals are
+		// deterministic, see pq.EncodeSeal); any fixed order will do.
 		externRank, localRank := parliaTieRank(extern), parliaTieRank(current)
 		if c := externRank.Cmp(localRank); c != 0 {
 			reorg = c < 0
@@ -170,5 +170,5 @@ func (f *ForkChoice) ReorgNeededWithFastFinality(current *types.Header, header *
 
 // parliaTieRank orders equal total difficulty Parlia siblings (lower wins).
 func parliaTieRank(h *types.Header) common.Hash {
-	return crypto.Keccak256Hash(h.ParentHash.Bytes(), h.Coinbase.Bytes())
+	return crypto.Keccak256Hash(common.LeftPadBytes(h.Number.Bytes(), 32), h.Coinbase.Bytes())
 }

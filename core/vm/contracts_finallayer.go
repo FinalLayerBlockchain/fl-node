@@ -129,8 +129,11 @@ func applyFinalLayerPrecompilePolicy() {
 var pqDoubleSignEvidenceAddress = common.BytesToAddress([]byte{0x68})
 
 // pqDoubleSignEvidence is the BSC double-sign evidence check with post-quantum
-// header seals: two different headers at the same height and parent, both
-// sealed by the same ML-DSA key.
+// header seals: two different sealed headers at the same height and parent,
+// both sealed by the same ML-DSA key. Validators seal deterministically, so an
+// honest node that seals the same header twice produces the same block; two
+// different seals over the same header (re-rolled randomized signatures that
+// would give a validator many block hashes to choose from) are equivocation.
 //
 // Input:  rlp(DoubleSignEvidence{ChainId, HeaderBytes1, HeaderBytes2})
 // Output: signer address (20 bytes) || evidence height (32 bytes)
@@ -161,11 +164,11 @@ func (c *pqDoubleSignEvidence) Run(input []byte) ([]byte, error) {
 	if len(header1.Extra) < pq.SealSize || len(header2.Extra) < pq.SealSize {
 		return nil, errInvalidEvidence
 	}
-	msgHash1 := types.SealHash(header1, evidence.ChainId)
-	msgHash2 := types.SealHash(header2, evidence.ChainId)
-	if msgHash1 == msgHash2 {
+	if header1.Hash() == header2.Hash() {
 		return nil, errInvalidEvidence
 	}
+	msgHash1 := types.SealHash(header1, evidence.ChainId)
+	msgHash2 := types.SealHash(header2, evidence.ChainId)
 	signer1, err := pq.VerifySeal(header1.Extra[len(header1.Extra)-pq.SealSize:], msgHash1.Bytes())
 	if err != nil {
 		return nil, ErrExecutionReverted

@@ -1392,10 +1392,12 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	if p.chainConfig.IsFeynman(header.Number, header.Time) && isBreatheBlock(parent.Time, header.Time) {
 		// we should avoid update validators in the Feynman upgrade block
 		if !p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
-			if err := p.distributeStakingInflation(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
+			if err := p.updateValidatorSetV2(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
 				return err
 			}
-			if err := p.updateValidatorSetV2(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
+			// Final Layer: install the new election first, so the inflation
+			// snapshot taken by the distribution is the newly elected set.
+			if err := p.distributeStakingInflation(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
 				return err
 			}
 		}
@@ -1497,10 +1499,12 @@ func (p *Parlia) finalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	if p.chainConfig.IsFeynman(header.Number, header.Time) && isBreatheBlock(parent.Time, header.Time) {
 		// we should avoid update validators in the Feynman upgrade block
 		if !p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
-			if err := p.distributeStakingInflation(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
+			if err := p.updateValidatorSetV2(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
 				return nil, nil, err
 			}
-			if err := p.updateValidatorSetV2(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
+			// Final Layer: install the new election first, so the inflation
+			// snapshot taken by the distribution is the newly elected set.
+			if err := p.distributeStakingInflation(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
 				return nil, nil, err
 			}
 		}

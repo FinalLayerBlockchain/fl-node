@@ -184,6 +184,15 @@ func (k *PrivateKey) PublicKey() []byte { return common.CopyBytes(k.pk) }
 // Address returns the default address of this key.
 func (k *PrivateKey) Address() common.Address { return Address(k.Scheme, k.pk) }
 
+// signDeterministic signs msg in domain d with deterministic ML-DSA.
+func (k *PrivateKey) signDeterministic(d Domain, msg []byte) ([]byte, error) {
+	sig := make([]byte, mldsa87.SignatureSize)
+	if err := mldsa87.SignTo(k.sk, msg, []byte(d), false, sig); err != nil {
+		return nil, err
+	}
+	return sig, nil
+}
+
 // Sign signs msg in domain d (hedged/randomized signing as recommended by
 // FIPS 204).
 func (k *PrivateKey) Sign(d Domain, msg []byte) ([]byte, error) {
@@ -303,9 +312,12 @@ func (u *uint256Shim) setUint64(v uint64) []byte {
 // different size requires a coordinated network upgrade.
 const SealSize = 1 + mldsa87.PublicKeySize + mldsa87.SignatureSize
 
-// EncodeSeal builds a seal over hash with key.
+// EncodeSeal builds a seal over hash with key. Seals use deterministic
+// ML-DSA signing (FIPS 204 allows both modes), so sealing the same header
+// twice gives the same block; two different seals over one header are
+// slashable equivocation (see the 0x68 double-sign evidence precompile).
 func EncodeSeal(key *PrivateKey, hash []byte) ([]byte, error) {
-	sig, err := key.Sign(DomainSeal, hash)
+	sig, err := key.signDeterministic(DomainSeal, hash)
 	if err != nil {
 		return nil, err
 	}
