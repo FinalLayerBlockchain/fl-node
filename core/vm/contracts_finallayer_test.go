@@ -192,3 +192,23 @@ func TestPQDoubleSignSameHeaderReseal(t *testing.T) {
 		t.Fatal("wrong signer")
 	}
 }
+
+// Two headers with the same seal that differ only in fields the seal hash does
+// not cover are one signature, not equivocation.
+func TestPQDoubleSignSameSealNotEvidence(t *testing.T) {
+	chainID := big.NewInt(20261012)
+	key, _ := pq.GenerateKey()
+	h1 := pqSealedHeader(t, key, chainID, 100, common.Hash{1}, 7)
+	h := new(types.Header)
+	if err := rlp.DecodeBytes(h1, h); err != nil {
+		t.Fatal(err)
+	}
+	h.BaseFee = big.NewInt(12345) // not covered by the seal hash for this header shape
+	h2, err := rlp.EncodeToBytes(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&pqDoubleSignEvidence{}).Run(doubleSignInput(t, chainID, h1, h2)); err == nil {
+		t.Fatal("one seal over two header encodings accepted as double sign")
+	}
+}

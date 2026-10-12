@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"bytes"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pq"
@@ -169,6 +170,11 @@ func (c *pqDoubleSignEvidence) Run(input []byte) ([]byte, error) {
 	}
 	msgHash1 := types.SealHash(header1, evidence.ChainId)
 	msgHash2 := types.SealHash(header2, evidence.ChainId)
+	// Same seal hash and same seal: the headers differ only in fields the seal
+	// hash does not cover, so the validator signed just once. Not evidence.
+	if msgHash1 == msgHash2 && bytes.Equal(header1.Extra[len(header1.Extra)-pq.SealSize:], header2.Extra[len(header2.Extra)-pq.SealSize:]) {
+		return nil, errInvalidEvidence
+	}
 	signer1, err := pq.VerifySeal(header1.Extra[len(header1.Extra)-pq.SealSize:], msgHash1.Bytes())
 	if err != nil {
 		return nil, ErrExecutionReverted
