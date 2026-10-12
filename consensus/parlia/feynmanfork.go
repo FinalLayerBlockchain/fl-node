@@ -190,11 +190,11 @@ func (p *Parlia) getValidatorElectionInfo(blockNr rpc.BlockNumberOrHash) ([]Vali
 		}
 		msgData := (hexutil.Bytes)(data)
 
-		result, err := p.ethAPI.ConsensusCall(ctx, ethapi.TransactionArgs{
+		result, err := ethapi.ConsensusCall(ctx, p.ethAPI, ethapi.TransactionArgs{
 			Gas:  &gas,
 			To:   &toAddress,
 			Data: &msgData,
-		}, &blockNr, nil, nil)
+		}, &blockNr)
 		if err != nil {
 			return nil, nil, nil, 0, err
 		}
@@ -228,11 +228,11 @@ func (p *Parlia) getMaxElectedValidators(blockNr rpc.BlockNumberOrHash) (maxElec
 	}
 	msgData := (hexutil.Bytes)(data)
 
-	result, err := p.ethAPI.ConsensusCall(ctx, ethapi.TransactionArgs{
+	result, err := ethapi.ConsensusCall(ctx, p.ethAPI, ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,
-	}, &blockNr, nil, nil)
+	}, &blockNr)
 	if err != nil {
 		return nil, err
 	}

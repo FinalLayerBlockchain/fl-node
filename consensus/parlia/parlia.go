@@ -1863,11 +1863,11 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) 
 	msgData := (hexutil.Bytes)(data)
 	toAddress := common.HexToAddress(systemcontracts.ValidatorContract)
 	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
-	result, err := p.ethAPI.ConsensusCall(ctx, ethapi.TransactionArgs{
+	result, err := ethapi.ConsensusCall(ctx, p.ethAPI, ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,
-	}, &blockNr, nil, nil)
+	}, &blockNr)
 	if err != nil {
 		return nil, nil, err
 	}

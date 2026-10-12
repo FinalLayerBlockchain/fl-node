@@ -66,11 +66,11 @@ func (p *Parlia) getTurnLengthFromContract(header *types.Header) (turnLength *bi
 	msgData := (hexutil.Bytes)(data)
 
 	blockNr := rpc.BlockNumberOrHashWithHash(header.Hash(), false)
-	result, err := p.ethAPI.ConsensusCall(ctx, ethapi.TransactionArgs{
+	result, err := ethapi.ConsensusCall(ctx, p.ethAPI, ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,
-	}, &blockNr, nil, nil)
+	}, &blockNr)
 	if err != nil {
 		return nil, err
 	}

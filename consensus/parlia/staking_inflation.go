@@ -42,8 +42,11 @@ const finalLayerStakeABI = `[
 ]`
 
 // stakingInflationReservedGas is the block gas the miner keeps free on breathe
-// blocks for distributeStakingInflation: ~138k gas per recipient pool, at most
-// StakeHub.MAX_INFLATION_VALIDATORS (100) pools. System transactions count
+// blocks for distributeStakingInflation: up to ~205k gas per recipient pool
+// (retry of a failed payout + payout + re-snapshot), at most
+// StakeHub.MAX_INFLATION_VALIDATORS (50) pools, ~10.2M (forge
+// testBreatheBlockGasAtMaxElected). At 100 pools the breathe block's system
+// txs alone would exceed the 40M block gas limit. System transactions count
 // towards header.GasUsed, so without this reserve a full breathe block would
 // exceed the gas limit and be rejected by every node.
 const stakingInflationReservedGas uint64 = 15_000_000
@@ -69,11 +72,11 @@ func (p *Parlia) pendingStakingInflation(header *types.Header) (*big.Int, error)
 	to := common.HexToAddress(systemcontracts.StakeHubContract)
 	gas := hexutil.Uint64(uint64(math.MaxUint64 / 2))
 	blockNr := rpc.BlockNumberOrHashWithHash(header.ParentHash, false)
-	result, err := p.ethAPI.ConsensusCall(ctx, ethapi.TransactionArgs{
+	result, err := ethapi.ConsensusCall(ctx, p.ethAPI, ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &to,
 		Data: &msgData,
-	}, &blockNr, nil, nil)
+	}, &blockNr)
 	if err != nil {
 		return nil, err
 	}
