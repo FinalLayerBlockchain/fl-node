@@ -63,7 +63,10 @@ type schemeInfo struct {
 	sigSize int
 	// authGas is charged as extra intrinsic gas on every transaction signed
 	// with this scheme, to price the bytes of the public key and signature
-	// that travel with the transaction (8 gas per byte, rounded up).
+	// that travel with the transaction at Ethereum's calldata price (16 gas
+	// per byte, rounded up): ML-DSA-87 is 2,592 + 4,627 = 7,219 bytes, so
+	// 115,504, charged as 116,000. These bytes are the main storage and
+	// bandwidth cost of the chain, so they must not be cheaper than calldata.
 	authGas uint64
 	verify  func(pk, msg, ctx, sig []byte) bool
 }
@@ -73,7 +76,7 @@ var schemes = map[Scheme]schemeInfo{
 		name:    "ML-DSA-87",
 		pkSize:  mldsa87.PublicKeySize,
 		sigSize: mldsa87.SignatureSize,
-		authGas: 58_000,
+		authGas: 116_000,
 		verify:  verifyMLDSA87,
 	},
 }

@@ -96,7 +96,7 @@ func TestPQTransferAndRotation(t *testing.T) {
 	}
 
 	// 3. An attacker key cannot spend from acct even when it claims From=acct.
-	if _, err := e.apply(e.sign(attacker, acct, dest, 1, nil, 100000)); !errors.Is(err, ErrPQUnauthorized) {
+	if _, err := e.apply(e.sign(attacker, acct, dest, 1, nil, 21000+pq.AuthGas(pq.SchemeMLDSA87))); !errors.Is(err, ErrPQUnauthorized) {
 		t.Fatalf("expected unauthorized, got %v", err)
 	}
 
@@ -125,11 +125,11 @@ func TestPQTransferAndRotation(t *testing.T) {
 	}
 
 	// 6. Old key is now rejected, new key spends from the SAME address.
-	if _, err := e.apply(e.sign(k1, acct, dest, 1, nil, 100000)); !errors.Is(err, ErrPQUnauthorized) {
+	if _, err := e.apply(e.sign(k1, acct, dest, 1, nil, 21000+pq.AuthGas(pq.SchemeMLDSA87))); !errors.Is(err, ErrPQUnauthorized) {
 		t.Fatalf("old key still accepted: %v", err)
 	}
 	before := e.db.GetBalance(dest).Uint64()
-	rcpt, err = e.apply(e.sign(k2, acct, dest, 7, nil, 100000))
+	rcpt, err = e.apply(e.sign(k2, acct, dest, 7, nil, 21000+pq.AuthGas(pq.SchemeMLDSA87)))
 	if err != nil || rcpt.Status != types.ReceiptStatusSuccessful || e.db.GetBalance(dest).Uint64() != before+7 {
 		t.Fatalf("new key transfer failed: %v", err)
 	}
