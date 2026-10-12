@@ -69,7 +69,7 @@ func (p *Parlia) pendingStakingInflation(header *types.Header) (*big.Int, error)
 	to := common.HexToAddress(systemcontracts.StakeHubContract)
 	gas := hexutil.Uint64(uint64(math.MaxUint64 / 2))
 	blockNr := rpc.BlockNumberOrHashWithHash(header.ParentHash, false)
-	result, err := p.ethAPI.Call(ctx, ethapi.TransactionArgs{
+	result, err := p.ethAPI.ConsensusCall(ctx, ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &to,
 		Data: &msgData,

@@ -36,7 +36,7 @@ func (p *Parlia) GetValidators(offset, limit *big.Int) ([]common.Address, []comm
 	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
 
 	log.Debug("Calling getValidators from latest block", "to", toAddress)
-	result, err := p.ethAPI.Call(context.Background(), ethapi.TransactionArgs{
+	result, err := p.ethAPI.ConsensusCall(context.Background(), ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,
@@ -78,7 +78,7 @@ func (p *Parlia) getNodeIDsForValidators(validatorsToQuery []common.Address) (ma
 	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
 
 	log.Debug("Calling getNodeIDs from latest block", "to", toAddress)
-	result, err := p.ethAPI.Call(context.Background(), ethapi.TransactionArgs{
+	result, err := p.ethAPI.ConsensusCall(context.Background(), ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,

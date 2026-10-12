@@ -853,9 +853,7 @@ func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Hea
 			"parent", header.ParentHash, "coinbase", header.Coinbase, "extra", common.Bytes2Hex(header.Extra))
 		verifyVoteAttestationErrorCounter.Inc(1)
 		// Final Layer: an attestation is never accepted, also before Plato.
-		if chain.Config().IsPlato(header.Number) || errors.Is(err, errFastFinalityOff) {
-			return err
-		}
+		return err
 	}
 
 	// Resolve the authorization key and check against validators
@@ -1316,6 +1314,10 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 		return err
 	}
 
+	if err := checkConsensusKeyRevoked(state, header); err != nil {
+		return err
+	}
+
 	cx := chainContext{ChainHeaderReader: chain, parlia: p}
 
 	parent := chain.GetHeaderByHash(header.ParentHash)
@@ -1422,6 +1424,10 @@ func (p *Parlia) finalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	body *types.Body, receipts []*types.Receipt, tracer *tracing.Hooks, mode systemTxMode) (*types.Block, []*types.Receipt, error) {
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	cx := chainContext{ChainHeaderReader: chain, parlia: p}
+
+	if err := checkConsensusKeyRevoked(state, header); err != nil {
+		return nil, nil, err
+	}
 
 	if body.Transactions == nil {
 		body.Transactions = make([]*types.Transaction, 0)
@@ -1857,7 +1863,7 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) 
 	msgData := (hexutil.Bytes)(data)
 	toAddress := common.HexToAddress(systemcontracts.ValidatorContract)
 	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
-	result, err := p.ethAPI.Call(ctx, ethapi.TransactionArgs{
+	result, err := p.ethAPI.ConsensusCall(ctx, ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,

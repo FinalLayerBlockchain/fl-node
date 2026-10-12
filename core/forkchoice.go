@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -112,11 +113,16 @@ func (f *ForkChoice) ReorgNeeded(current *types.Header, extern *types.Header) (b
 		// Final Layer: every node must order equal-TD siblings the same way.
 		// A random pick per node can leave two validators each on their own
 		// block, which the Parlia recents rule forbids them to extend, and
-		// the chain halts while the third validator is offline. The earlier
-		// millisecond timestamp wins, then the lower hash.
-		externMs, localMs := extern.MilliTimestamp(), current.MilliTimestamp()
-		if externMs != localMs {
-			reorg = externMs < localMs
+		// the chain halts while the third validator is offline.
+		// The order must also be impossible for the producer to influence:
+		// ML-DSA signing is randomized, so the block hash can be re-rolled by
+		// re-signing, and the timestamp is partly the producer's choice. The
+		// rank is therefore keccak256(parentHash || coinbase), fixed for each
+		// validator at each parent. Two blocks of the same validator on the
+		// same parent are a slashable double sign; any fixed order will do.
+		externRank, localRank := parliaTieRank(extern), parliaTieRank(current)
+		if c := externRank.Cmp(localRank); c != 0 {
+			reorg = c < 0
 		} else {
 			reorg = extern.Hash().Cmp(current.Hash()) < 0
 		}
@@ -160,4 +166,9 @@ func (f *ForkChoice) ReorgNeededWithFastFinality(current *types.Header, header *
 			"toHeight", header.Number, "toHash", header.Hash(), "toMiner", header.Coinbase, "toJustified", justifiedNumber)
 	}
 	return justifiedNumber > curJustifiedNumber, nil
+}
+
+// parliaTieRank orders equal total difficulty Parlia siblings (lower wins).
+func parliaTieRank(h *types.Header) common.Hash {
+	return crypto.Keccak256Hash(h.ParentHash.Bytes(), h.Coinbase.Bytes())
 }

@@ -83,17 +83,10 @@ func (b *EthAPIBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumb
 	if number == rpc.LatestBlockNumber {
 		return b.eth.blockchain.CurrentBlock(), nil
 	}
-	if number == rpc.FinalizedBlockNumber {
-		block := b.eth.blockchain.CurrentFinalBlock()
+	if number == rpc.FinalizedBlockNumber || number == rpc.SafeBlockNumber {
+		block := b.finalLayerTaggedHeader(number)
 		if block == nil {
 			return nil, errors.New("finalized block not found")
-		}
-		return block, nil
-	}
-	if number == rpc.SafeBlockNumber {
-		block := b.eth.blockchain.CurrentSafeBlock()
-		if block == nil {
-			return nil, errors.New("safe block not found")
 		}
 		return block, nil
 	}
@@ -141,17 +134,10 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 		header := b.eth.blockchain.CurrentBlock()
 		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
 	}
-	if number == rpc.FinalizedBlockNumber {
-		header := b.eth.blockchain.CurrentFinalBlock()
+	if number == rpc.FinalizedBlockNumber || number == rpc.SafeBlockNumber {
+		header := b.finalLayerTaggedHeader(number)
 		if header == nil {
 			return nil, errors.New("finalized block not found")
-		}
-		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
-	}
-	if number == rpc.SafeBlockNumber {
-		header := b.eth.blockchain.CurrentSafeBlock()
-		if header == nil {
-			return nil, errors.New("safe block not found")
 		}
 		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
 	}

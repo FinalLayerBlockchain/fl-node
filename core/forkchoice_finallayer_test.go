@@ -44,11 +44,11 @@ func newTieChain() *tieChain {
 }
 
 // Two validators that seal competing out-of-turn blocks at the same height
-// with the same TD and the same second must be ordered the same way by every
-// node; a random choice per node can leave each validator on its own block,
-// where the Parlia recents rule forbids it from extending: a permanent halt
-// while the third validator is offline.
-func TestFinalLayerForkChoiceEqualSecondIsDeterministic(t *testing.T) {
+// with the same TD must be ordered the same way by every node; a random choice
+// per node can leave each validator on its own block, where the Parlia recents
+// rule forbids it from extending: a permanent halt while the third validator
+// is offline.
+func TestFinalLayerForkChoiceEqualTDIsDeterministic(t *testing.T) {
 	for i := 0; i < 64; i++ {
 		c := newTieChain()
 		a := c.add(tieHeader(2, 1000, 0), 100)
@@ -66,27 +66,33 @@ func TestFinalLayerForkChoiceEqualSecondIsDeterministic(t *testing.T) {
 		if ab == ba {
 			t.Fatalf("iteration %d: nodes on a (reorg=%v) and on b (reorg=%v) do not converge", i, ab, ba)
 		}
-		// lower hash wins the exact tie
-		want := b.Hash().Cmp(a.Hash()) < 0
+		want := parliaTieRank(b).Cmp(parliaTieRank(a)) < 0
 		if ab != want {
 			t.Fatalf("iteration %d: reorg a->b = %v, want %v", i, ab, want)
 		}
 	}
 }
 
-// Within the same second the millisecond part of the Parlia timestamp decides.
-func TestFinalLayerForkChoiceUsesMilliseconds(t *testing.T) {
-	for i := 0; i < 64; i++ {
-		c := newTieChain()
-		early := c.add(tieHeader(2, 1000, 100), 100)
-		late := c.add(tieHeader(3, 1000, 900), 100)
-		f := NewForkChoice(c)
-
-		if reorg, _ := f.ReorgNeeded(late, early); !reorg {
-			t.Fatalf("iteration %d: node on the later block did not switch to the earlier one", i)
+// A producer cannot win a tie by re-signing (ML-DSA signing is randomized, so
+// every re-sign gives a new block hash) or by choosing its timestamp: every
+// variant of its block ranks the same against the competitor.
+func TestFinalLayerForkChoiceNotGrindable(t *testing.T) {
+	c := newTieChain()
+	rival := c.add(tieHeader(3, 1000, 0), 100)
+	f := NewForkChoice(c)
+	var first *bool
+	for i := 0; i < 1000; i++ {
+		v := tieHeader(2, 1000+uint64(i%3), uint64(i%1000))
+		v.Extra = []byte{byte(i), byte(i >> 8)} // stands in for a fresh seal
+		c.add(v, 100)
+		reorg, err := f.ReorgNeeded(rival, v)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if reorg, _ := f.ReorgNeeded(early, late); reorg {
-			t.Fatalf("iteration %d: node on the earlier block switched to the later one", i)
+		if first == nil {
+			first = &reorg
+		} else if reorg != *first {
+			t.Fatalf("variant %d changed the tie outcome", i)
 		}
 	}
 }

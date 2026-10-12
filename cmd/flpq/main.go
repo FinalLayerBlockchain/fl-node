@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -483,6 +484,13 @@ func cmdEditConsensus(args []string, from *common.Address) error {
 	if from != nil {
 		operator = *from
 	}
+	// A BEP-410 agent acts for its operator; StakeHub checks the proof
+	// against the operator, so sign for the operator.
+	if op, err := agentOperator(args[0], operator); err != nil {
+		return err
+	} else if op != (common.Address{}) {
+		operator = op
+	}
 	proof, err := pq.EncodeValidatorProof(consensusKey, chainID, operator)
 	if err != nil {
 		return err
@@ -593,4 +601,24 @@ func rpcChainID(url string) (uint64, error) {
 		return 0, err
 	}
 	return id.Uint64(), nil
+}
+
+// agentOperator returns the operator an address is a BEP-410 agent for, or
+// the zero address.
+func agentOperator(rpc string, agent common.Address) (common.Address, error) {
+	c, err := dial(rpc)
+	if err != nil {
+		return common.Address{}, err
+	}
+	defer c.Close()
+	data := append(crypto.Keccak256([]byte("agentToOperator(address)"))[:4], common.LeftPadBytes(agent.Bytes(), 32)...)
+	to := stakeHub
+	out, err := c.CallContract(context.Background(), ethereum.CallMsg{To: &to, Data: data}, nil)
+	if err != nil {
+		return common.Address{}, err
+	}
+	if len(out) != 32 {
+		return common.Address{}, errors.New("unexpected agentToOperator result")
+	}
+	return common.BytesToAddress(out[12:]), nil
 }
