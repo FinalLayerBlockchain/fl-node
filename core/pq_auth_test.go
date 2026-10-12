@@ -174,7 +174,15 @@ func TestClassicalPrecompilesDisabled(t *testing.T) {
 	key, _ := pq.GenerateKey()
 	msg := make([]byte, 32)
 	msg[0] = 9
-	sig, _ := key.Sign(msg)
+	// A transaction-domain signature over the same bytes must be rejected.
+	txSig, _ := key.Sign(pq.DomainTx, msg)
+	txIn := append([]byte{byte(pq.SchemeMLDSA87)}, msg...)
+	txIn = append(txIn, key.PublicKey()...)
+	txIn = append(txIn, txSig...)
+	if out, err := p.Run(txIn); err != nil || out[31] != 0 {
+		t.Fatal("precompile accepted a transaction-domain signature")
+	}
+	sig, _ := key.Sign(pq.DomainContract, msg)
 	in := append([]byte{byte(pq.SchemeMLDSA87)}, msg...)
 	in = append(in, key.PublicKey()...)
 	in = append(in, sig...)

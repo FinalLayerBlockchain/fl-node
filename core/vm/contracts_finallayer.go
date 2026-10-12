@@ -74,7 +74,7 @@ func (c *pqVerify) Run(input []byte) ([]byte, error) {
 	msg := input[1:33]
 	pk := input[33 : 33+pkLen]
 	sig := input[33+pkLen:]
-	if pq.Verify(s, pk, msg, sig) == nil {
+	if pq.Verify(s, pq.DomainContract, pk, msg, sig) == nil {
 		out[31] = 1
 	}
 	return out, nil

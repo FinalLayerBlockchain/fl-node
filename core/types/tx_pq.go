@@ -160,7 +160,7 @@ func SignPQTx(tx *Transaction, s Signer, key *pq.PrivateKey) (*Transaction, erro
 		return nil, pq.ErrUnknownScheme
 	}
 	h := s.Hash(tx)
-	sig, err := key.Sign(h[:])
+	sig, err := key.Sign(pq.DomainTx, h[:])
 	if err != nil {
 		return nil, err
 	}

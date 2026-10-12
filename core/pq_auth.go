@@ -62,7 +62,7 @@ func (st *stateTransition) applyPQRotation() error {
 		return err
 	}
 	chainID := st.evm.ChainConfig().ChainID.Uint64()
-	if err := pq.Verify(s, pk, pq.RotationProofHash(chainID, msg.From, msg.Nonce), proof); err != nil {
+	if err := pq.Verify(s, pq.DomainRotation, pk, pq.RotationProofHash(chainID, msg.From, msg.Nonce), proof); err != nil {
 		return fmt.Errorf("pq key rotation proof: %w", err)
 	}
 	st.state.SetState(pq.RegistryAddress, pq.RegistrySlot(msg.From), pq.KeyHash(s, pk))

@@ -40,7 +40,7 @@ Transactions (add --from <address> to sign for an account that rotated its key)
   flpq send <rpc> <key.json> <to> <amountFL>
   flpq tx <rpc> <key.json> <to|create> <valueFL> <datahex> [gas]
   flpq rotate <rpc> <currentKey.json> <newKey.json>
-  flpq create-validator <rpc> <operatorKey.json> <consensusAddress> <selfStakeFL> <moniker> [commissionBps]
+  flpq create-validator <rpc> <operatorKey.json> <consensusKey.json> <selfStakeFL> <moniker> [commissionBps]
   flpq delegate <rpc> <key.json> <operatorAddress> <amountFL>
   flpq undelegate <rpc> <key.json> <operatorAddress> <shares>
   flpq claim <rpc> <key.json> <operatorAddress>
@@ -415,7 +415,25 @@ func cmdCreateValidator(args []string, from *common.Address) error {
 	if err != nil {
 		return err
 	}
-	consensus := common.HexToAddress(args[2])
+	// The consensus key proves possession; StakeHub rejects a consensus
+	// address registered without it.
+	consensusKey, err := loadKey(args[2])
+	if err != nil {
+		return err
+	}
+	consensus := consensusKey.Address()
+	chainID, err := rpcChainID(args[0])
+	if err != nil {
+		return err
+	}
+	operator := key.Address()
+	if from != nil {
+		operator = *from
+	}
+	proof, err := pq.EncodeValidatorProof(consensusKey, chainID, operator)
+	if err != nil {
+		return err
+	}
 	stake, err := parseFL(args[3])
 	if err != nil {
 		return err
@@ -426,7 +444,7 @@ func cmdCreateValidator(args []string, from *common.Address) error {
 	}
 	type comm struct{ Rate, MaxRate, MaxChangeRate uint64 }
 	type desc struct{ Moniker, Identity, Website, Details string }
-	data, err := packStake("createValidator", consensus, voteIdentifier(consensus), []byte{},
+	data, err := packStake("createValidator", consensus, voteIdentifier(consensus), proof,
 		comm{Rate: commission, MaxRate: 5000, MaxChangeRate: 500},
 		desc{Moniker: args[4], Identity: "", Website: "", Details: "Final Layer validator"})
 	if err != nil {
@@ -523,4 +541,17 @@ func cmdGenesisValidators(args []string) error {
 	fmt.Println("INIT_VALIDATORSET_BYTES=" + common.Bytes2Hex(pkg))
 	fmt.Println("EXTRA_DATA=0x" + common.Bytes2Hex(extra))
 	return nil
+}
+
+func rpcChainID(url string) (uint64, error) {
+	c, err := ethclient.Dial(url)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	id, err := c.ChainID(context.Background())
+	if err != nil {
+		return 0, err
+	}
+	return id.Uint64(), nil
 }

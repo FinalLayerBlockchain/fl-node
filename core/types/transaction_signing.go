@@ -498,7 +498,7 @@ func decodeSignature(sig []byte) (r, s, v *big.Int, err error) {
 // transaction pool and the state transition (see core.CheckPQAuthorization).
 func pqSender(sighash common.Hash, tx *Transaction) (common.Address, error) {
 	inner := tx.inner.(*PQTx)
-	if err := pq.Verify(pq.Scheme(inner.Scheme), inner.PubKey, sighash[:], inner.Signature); err != nil {
+	if err := pq.Verify(pq.Scheme(inner.Scheme), pq.DomainTx, inner.PubKey, sighash[:], inner.Signature); err != nil {
 		return common.Address{}, fmt.Errorf("%w: %v", ErrInvalidSig, err)
 	}
 	return inner.From, nil

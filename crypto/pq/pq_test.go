@@ -17,36 +17,36 @@ func TestSignVerify(t *testing.T) {
 		t.Fatalf("ML-DSA-87 public key size %d", len(k.PublicKey()))
 	}
 	msg := crypto.Keccak256([]byte("hello final layer"))
-	sig, err := k.Sign(msg)
+	sig, err := k.Sign(DomainTx, msg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sig) != 4627 {
 		t.Fatalf("ML-DSA-87 signature size %d", len(sig))
 	}
-	if err := Verify(SchemeMLDSA87, k.PublicKey(), msg, sig); err != nil {
+	if err := Verify(SchemeMLDSA87, DomainTx, k.PublicKey(), msg, sig); err != nil {
 		t.Fatalf("valid signature rejected: %v", err)
 	}
 	bad := common.CopyBytes(sig)
 	bad[10] ^= 1
-	if Verify(SchemeMLDSA87, k.PublicKey(), msg, bad) == nil {
+	if Verify(SchemeMLDSA87, DomainTx, k.PublicKey(), msg, bad) == nil {
 		t.Fatal("tampered signature accepted")
 	}
 	msg2 := crypto.Keccak256([]byte("other"))
-	if Verify(SchemeMLDSA87, k.PublicKey(), msg2, sig) == nil {
+	if Verify(SchemeMLDSA87, DomainTx, k.PublicKey(), msg2, sig) == nil {
 		t.Fatal("signature accepted for wrong message")
 	}
-	if Verify(Scheme(0x02), k.PublicKey(), msg, sig) == nil {
+	if Verify(Scheme(0x02), DomainTx, k.PublicKey(), msg, sig) == nil {
 		t.Fatal("unknown scheme accepted")
 	}
-	if Verify(Scheme(0x00), k.PublicKey(), msg, sig) == nil {
+	if Verify(Scheme(0x00), DomainTx, k.PublicKey(), msg, sig) == nil {
 		t.Fatal("scheme 0 accepted")
 	}
 	// Truncated / extended inputs
-	if Verify(SchemeMLDSA87, k.PublicKey(), msg, sig[:len(sig)-1]) == nil {
+	if Verify(SchemeMLDSA87, DomainTx, k.PublicKey(), msg, sig[:len(sig)-1]) == nil {
 		t.Fatal("short signature accepted")
 	}
-	if Verify(SchemeMLDSA87, k.PublicKey(), msg, append(common.CopyBytes(sig), 0)) == nil {
+	if Verify(SchemeMLDSA87, DomainTx, k.PublicKey(), msg, append(common.CopyBytes(sig), 0)) == nil {
 		t.Fatal("long signature accepted")
 	}
 }
@@ -94,13 +94,13 @@ func TestRotationPayload(t *testing.T) {
 	if s != SchemeMLDSA87 || !bytes.Equal(pk, newKey.PublicKey()) {
 		t.Fatal("parsed rotation mismatch")
 	}
-	if err := Verify(s, pk, RotationProofHash(77, acct, 5), proof); err != nil {
+	if err := Verify(s, DomainRotation, pk, RotationProofHash(77, acct, 5), proof); err != nil {
 		t.Fatalf("rotation proof invalid: %v", err)
 	}
 	// Proof is bound to chain, account and nonce.
-	if Verify(s, pk, RotationProofHash(78, acct, 5), proof) == nil ||
-		Verify(s, pk, RotationProofHash(77, common.HexToAddress("0x9999"), 5), proof) == nil ||
-		Verify(s, pk, RotationProofHash(77, acct, 6), proof) == nil {
+	if Verify(s, DomainRotation, pk, RotationProofHash(78, acct, 5), proof) == nil ||
+		Verify(s, DomainRotation, pk, RotationProofHash(77, common.HexToAddress("0x9999"), 5), proof) == nil ||
+		Verify(s, DomainRotation, pk, RotationProofHash(77, acct, 6), proof) == nil {
 		t.Fatal("rotation proof not bound to context")
 	}
 	if _, _, _, err := ParseRotation(data[:len(data)-1]); err == nil {
@@ -130,5 +130,32 @@ func TestSeal(t *testing.T) {
 	seal[SealSize-1] ^= 0x80
 	if _, err := VerifySeal(seal, h); err == nil {
 		t.Fatal("tampered seal accepted")
+	}
+}
+
+// TestDomainSeparation checks that a signature made in one domain verifies in
+// no other domain, so for example a message signed for a contract can never
+// be replayed as a transaction, seal or key rotation.
+func TestDomainSeparation(t *testing.T) {
+	k, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := crypto.Keccak256([]byte("same 32 byte message"))
+	domains := []Domain{DomainTx, DomainSeal, DomainRotation, DomainContract}
+	for _, signIn := range domains {
+		sig, err := k.Sign(signIn, msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, verifyIn := range domains {
+			err := Verify(SchemeMLDSA87, verifyIn, k.PublicKey(), msg, sig)
+			if signIn == verifyIn && err != nil {
+				t.Fatalf("%s signature rejected in its own domain: %v", signIn, err)
+			}
+			if signIn != verifyIn && err == nil {
+				t.Fatalf("%s signature accepted in domain %s", signIn, verifyIn)
+			}
+		}
 	}
 }

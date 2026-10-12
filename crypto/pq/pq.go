@@ -40,6 +40,22 @@ var (
 	ErrBadRotationData = errors.New("pq: malformed key rotation payload")
 )
 
+// Domain is the FIPS 204 context string bound into every signature. Each
+// purpose has its own domain, so a signature made for one purpose (for
+// example a message a dApp asks a wallet to sign for a contract) can never
+// verify as another (a transaction, a block seal or a key rotation).
+type Domain string
+
+const (
+	DomainTx       Domain = "FinalLayer/tx/v1"
+	DomainSeal     Domain = "FinalLayer/seal/v1"
+	DomainRotation Domain = "FinalLayer/key-rotation/v1"
+	// DomainContract is the only domain the PQ verify precompile accepts.
+	// Wallets use it for messages that smart contracts check, including the
+	// validator proof of possession checked by StakeHub.
+	DomainContract Domain = "FinalLayer/contract/v1"
+)
+
 // schemeInfo describes an enabled scheme.
 type schemeInfo struct {
 	name    string
@@ -49,7 +65,7 @@ type schemeInfo struct {
 	// with this scheme, to price the bytes of the public key and signature
 	// that travel with the transaction (8 gas per byte, rounded up).
 	authGas uint64
-	verify  func(pk, msg, sig []byte) bool
+	verify  func(pk, msg, ctx, sig []byte) bool
 }
 
 var schemes = map[Scheme]schemeInfo{
@@ -98,9 +114,8 @@ func CheckKey(s Scheme, pk []byte) error {
 	return nil
 }
 
-// Verify checks sig over msg with the public key pk under scheme s.
-// msg is normally a 32 byte domain separated hash.
-func Verify(s Scheme, pk, msg, sig []byte) error {
+// Verify checks sig over msg in domain d with the public key pk under scheme s.
+func Verify(s Scheme, d Domain, pk, msg, sig []byte) error {
 	info, ok := schemes[s]
 	if !ok {
 		return ErrUnknownScheme
@@ -111,7 +126,7 @@ func Verify(s Scheme, pk, msg, sig []byte) error {
 	if len(sig) != info.sigSize {
 		return ErrBadSignature
 	}
-	if !info.verify(pk, msg, sig) {
+	if !info.verify(pk, msg, []byte(d), sig) {
 		return ErrInvalidSig
 	}
 	return nil
@@ -129,12 +144,12 @@ func KeyHash(s Scheme, pk []byte) common.Hash {
 	return crypto.Keccak256Hash([]byte{byte(s)}, pk)
 }
 
-func verifyMLDSA87(pkb, msg, sig []byte) bool {
+func verifyMLDSA87(pkb, msg, ctx, sig []byte) bool {
 	var pk mldsa87.PublicKey
 	if err := pk.UnmarshalBinary(pkb); err != nil {
 		return false
 	}
-	return mldsa87.Verify(&pk, msg, nil, sig)
+	return mldsa87.Verify(&pk, msg, ctx, sig)
 }
 
 // PrivateKey is an ML-DSA private key held by a wallet or validator.
@@ -169,10 +184,11 @@ func (k *PrivateKey) PublicKey() []byte { return common.CopyBytes(k.pk) }
 // Address returns the default address of this key.
 func (k *PrivateKey) Address() common.Address { return Address(k.Scheme, k.pk) }
 
-// Sign signs msg (hedged/randomized signing as recommended by FIPS 204).
-func (k *PrivateKey) Sign(msg []byte) ([]byte, error) {
+// Sign signs msg in domain d (hedged/randomized signing as recommended by
+// FIPS 204).
+func (k *PrivateKey) Sign(d Domain, msg []byte) ([]byte, error) {
 	sig := make([]byte, mldsa87.SignatureSize)
-	if err := mldsa87.SignTo(k.sk, msg, nil, true, sig); err != nil {
+	if err := mldsa87.SignTo(k.sk, msg, []byte(d), true, sig); err != nil {
 		return nil, err
 	}
 	return sig, nil
@@ -232,13 +248,38 @@ func ParseRotation(data []byte) (Scheme, []byte, []byte, error) {
 
 // EncodeRotation builds a rotation payload signed by newKey.
 func EncodeRotation(newKey *PrivateKey, chainID uint64, account common.Address, nonce uint64) ([]byte, error) {
-	proof, err := newKey.Sign(RotationProofHash(chainID, account, nonce))
+	proof, err := newKey.Sign(DomainRotation, RotationProofHash(chainID, account, nonce))
 	if err != nil {
 		return nil, err
 	}
 	out := []byte{byte(newKey.Scheme)}
 	out = append(out, newKey.PublicKey()...)
 	return append(out, proof...), nil
+}
+
+// ValidatorProofHash is the message a consensus key signs (in DomainContract)
+// to prove possession when a validator registers or changes its consensus
+// address. It matches StakeHub._checkConsensusProof:
+// keccak256(abi.encodePacked("FinalLayer/validator-pop/v1", chainid, consensus, operator)).
+func ValidatorProofHash(chainID uint64, consensus, operator common.Address) []byte {
+	var buf []byte
+	buf = append(buf, []byte("FinalLayer/validator-pop/v1")...)
+	buf = append(buf, common.LeftPadBytes(new(uint256Shim).setUint64(chainID), 32)...)
+	buf = append(buf, consensus.Bytes()...)
+	buf = append(buf, operator.Bytes()...)
+	return crypto.Keccak256(buf)
+}
+
+// EncodeValidatorProof builds the StakeHub proof of possession
+// scheme || pubkey || signature for consensusKey and operator.
+func EncodeValidatorProof(consensusKey *PrivateKey, chainID uint64, operator common.Address) ([]byte, error) {
+	sig, err := consensusKey.Sign(DomainContract, ValidatorProofHash(chainID, consensusKey.Address(), operator))
+	if err != nil {
+		return nil, err
+	}
+	out := []byte{byte(consensusKey.Scheme)}
+	out = append(out, consensusKey.PublicKey()...)
+	return append(out, sig...), nil
 }
 
 // uint256Shim encodes a uint64 big-endian without pulling in math/big.
@@ -264,7 +305,7 @@ const SealSize = 1 + mldsa87.PublicKeySize + mldsa87.SignatureSize
 
 // EncodeSeal builds a seal over hash with key.
 func EncodeSeal(key *PrivateKey, hash []byte) ([]byte, error) {
-	sig, err := key.Sign(hash)
+	sig, err := key.Sign(DomainSeal, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +330,7 @@ func VerifySeal(seal, hash []byte) (common.Address, error) {
 	}
 	pk := seal[1 : 1+mldsa87.PublicKeySize]
 	sig := seal[1+mldsa87.PublicKeySize:]
-	if err := Verify(s, pk, hash, sig); err != nil {
+	if err := Verify(s, DomainSeal, pk, hash, sig); err != nil {
 		return common.Address{}, err
 	}
 	return Address(s, pk), nil
