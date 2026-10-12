@@ -196,6 +196,19 @@ func finalLayerSizeCap(config *params.ChainConfig) uint64 {
 	return params.FinalLayerMaxBlockSize - params.FinalLayerBlockSizeBufferZone
 }
 
+// errFinalLayerBlockOversized is returned instead of sealing a block that every
+// other node would reject. The producer writes its own block without
+// ValidateBody, so sealing it would fork the producer off the chain.
+var errFinalLayerBlockOversized = errors.New("assembled block exceeds the Final Layer size cap")
+
+// checkFinalLayerBlockSize rejects an assembled block above the consensus cap.
+func checkFinalLayerBlockSize(config *params.ChainConfig, block *types.Block) error {
+	if config.Parlia != nil && block.Size() > params.FinalLayerMaxBlockSize {
+		return fmt.Errorf("%w: %d > %d bytes", errFinalLayerBlockOversized, block.Size(), params.FinalLayerMaxBlockSize)
+	}
+	return nil
+}
+
 // newWorkReq represents a request for new sealing work submitting with relative interrupt notifier.
 type newWorkReq struct {
 	interruptCh chan int32
@@ -1623,6 +1636,10 @@ func (w *worker) commit(env *environment, interval func(), start time.Time) erro
 		block, receipts, err := core.AssembleBlock(w.engine, w.chain, types.CopyHeader(env.header), env.state, &body, env.receipts)
 		env.committed = true
 		if err != nil {
+			return err
+		}
+		if err := checkFinalLayerBlockSize(w.chainConfig, block); err != nil {
+			log.Error("Refusing to seal oversized block", "number", block.Number(), "txs", len(body.Transactions), "err", err)
 			return err
 		}
 		env.txs = body.Transactions

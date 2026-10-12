@@ -153,6 +153,12 @@ func (w *worker) prepareBidBlockTask(
 		Withdrawals:  make([]*types.Withdrawal, 0),
 	}
 	block := types.NewBlockWithHeader(header).WithBody(*body).WithSidecars(decoded.Sidecars)
+	// Final Layer: the builder's block plus the PQ-signed system txs must fit
+	// the consensus size cap; the seal space is already reserved in Extra.
+	if err := checkFinalLayerBlockSize(w.chainConfig, block); err != nil {
+		w.revokeBidBlockBuilder(decoded.Builder, err.Error(), decoded.Hash(), decoded.BlockNumber())
+		return nil, err
+	}
 
 	return &task{
 		block: block,
