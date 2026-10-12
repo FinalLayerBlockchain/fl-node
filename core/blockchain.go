@@ -1688,7 +1688,12 @@ const (
 func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []rlp.RawValue, ancientLimit uint64) (int, error) {
 	// Verify the supplied headers before insertion without lock
 	var headers []*types.Header
-	for _, block := range blockChain {
+	for i, block := range blockChain {
+		// Final Layer: snap sync stores bodies without ValidateBody, so the
+		// consensus block size cap is enforced here as well.
+		if bc.chainConfig.Parlia != nil && block.Size() > params.FinalLayerMaxBlockSize {
+			return i, fmt.Errorf("block #%d: %w", block.NumberU64(), ErrBlockOversized)
+		}
 		headers = append(headers, block.Header())
 		// Here we also validate that blob transactions in the block do not
 		// contain a sidecar. While the sidecar does not affect the block hash

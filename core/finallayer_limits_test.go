@@ -45,3 +45,15 @@ func TestFinalLayerBlockSizeCap(t *testing.T) {
 		t.Fatalf("oversized block: err = %v, want ErrBlockOversized", err)
 	}
 }
+
+// Snap sync (InsertReceiptChain) enforces the cap too.
+func TestFinalLayerBlockSizeCapSnapSync(t *testing.T) {
+	config := &params.ChainConfig{ChainID: big.NewInt(20261012), Parlia: &params.ParliaConfig{}}
+	bc := &BlockChain{chainConfig: config}
+	header := &types.Header{Number: big.NewInt(1), Difficulty: big.NewInt(2), GasLimit: 40_000_000}
+	big := types.NewTx(&types.LegacyTx{Data: make([]byte, params.FinalLayerMaxBlockSize)})
+	block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: []*types.Transaction{big}})
+	if _, err := bc.InsertReceiptChain(types.Blocks{block}, nil, 0); !errors.Is(err, ErrBlockOversized) {
+		t.Fatalf("snap sync accepted an oversized block: %v", err)
+	}
+}
