@@ -113,6 +113,16 @@ func (p *Parlia) updateValidatorSetV2(state vm.StateDB, header *types.Header, ch
 	// 2. sort by voting power
 	eValidators, eVotingPowers, eVoteAddrs := getTopValidatorsByVotingPower(validatorItems, maxElectedValidators)
 
+	// Final Layer: with no eligible validator registered in StakeHub (e.g. a
+	// new genesis before its validators have registered) the election is
+	// empty, and BSCValidatorSet.updateValidatorSetV2 fails on an empty set,
+	// so no breathe block could be built: a permanent halt. Keep the current
+	// set instead. Producer and importer decide from the same parent state.
+	if len(eValidators) == 0 {
+		log.Warn("Empty validator election, keeping the current validator set", "number", header.Number)
+		return nil
+	}
+
 	// 3. update validator set to system contract
 	method := "updateValidatorSetV2"
 	data, err := p.validatorSetABI.Pack(method, eValidators, eVotingPowers, eVoteAddrs)
