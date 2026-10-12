@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types/bal"
+	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -676,7 +677,7 @@ func HeaderParentHashFromRLP(header []byte) common.Hash {
 	return common.BytesToHash(parentHash)
 }
 
-var extraSeal = 65 // Fixed number of extra-data suffix bytes reserved for signer seal
+var extraSeal = pq.SealSize // Final Layer: ML-DSA seal (scheme || pubkey || signature) reserved at the end of extra-data
 
 // SealHash returns the hash of a block prior to it being sealed.
 func SealHash(header *Header, chainId *big.Int) (hash common.Hash) {
