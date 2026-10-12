@@ -199,6 +199,16 @@ const (
 	HistoryServeWindow = 8191 // Number of blocks to serve historical block hashes for, EIP-2935.
 
 	MaxBlockSize = 8_388_608 // maximum size of an RLP-encoded block
+
+	// FinalLayerMaxBlockSize caps every Final Layer (Parlia) block at 1.5 MB of
+	// RLP, a consensus rule. Each PQ transaction carries 7,219 bytes of ML-DSA-87
+	// key and signature, so gas alone would allow ~2.1 MB blocks at 40M gas; this
+	// bounds propagation time and history growth (~43 GB/day at full blocks).
+	FinalLayerMaxBlockSize = 1_500_000
+	// FinalLayerBlockSizeBufferZone is kept free by the miner for the header
+	// (with its 7,220-byte seal and epoch validator list) and the PQ-signed
+	// system transactions added after the user transactions.
+	FinalLayerBlockSizeBufferZone = 100_000
 )
 
 var (

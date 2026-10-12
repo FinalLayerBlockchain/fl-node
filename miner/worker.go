@@ -117,6 +117,7 @@ type environment struct {
 	state    *state.StateDB // apply state changes here
 	tcount   int            // tx count in cycle
 	size     uint64         // size of the block we are building
+	sizeCap  uint64         // transactions are added while size stays below this
 	gasPool  *core.GasPool  // available gas used to pack transactions
 	coinbase common.Address
 	evm      *vm.EVM
@@ -164,7 +165,11 @@ type task struct {
 
 // txFitsSize reports whether the transaction fits into the block size limit.
 func (env *environment) txFitsSize(tx *types.Transaction) bool {
-	return env.size+tx.Size() < params.MaxBlockSize-maxBlockSizeBufferZone
+	limit := uint64(params.MaxBlockSize - maxBlockSizeBufferZone)
+	if env.sizeCap != 0 {
+		limit = env.sizeCap
+	}
+	return env.size+tx.Size() < limit
 }
 
 const (
@@ -180,6 +185,16 @@ const (
 // try to say below the size including a buffer zone, this is to avoid going over the
 // maximum size with auxiliary data added into the block.
 const maxBlockSizeBufferZone = 1_000_000
+
+// finalLayerSizeCap is the size the miner fills Final Layer (Parlia) blocks
+// up to, leaving room below params.FinalLayerMaxBlockSize for the header and
+// system transactions. Zero means the upstream limit.
+func finalLayerSizeCap(config *params.ChainConfig) uint64 {
+	if config.Parlia == nil {
+		return 0
+	}
+	return params.FinalLayerMaxBlockSize - params.FinalLayerBlockSizeBufferZone
+}
 
 // newWorkReq represents a request for new sealing work submitting with relative interrupt notifier.
 type newWorkReq struct {
@@ -729,6 +744,7 @@ func (w *worker) makeEnv(parent *types.Header, header *types.Header, coinbase co
 		signer:   types.MakeSigner(w.chainConfig, header.Number, header.Time),
 		state:    state,
 		size:     uint64(header.Size()),
+		sizeCap:  finalLayerSizeCap(w.chainConfig),
 		coinbase: coinbase,
 		gasPool:  core.NewGasPool(header.GasLimit - gasReserved),
 		header:   header,

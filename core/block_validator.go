@@ -54,6 +54,10 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	if v.config.IsOsaka(block.Number(), block.Time()) && block.Size() > params.MaxBlockSize {
 		return ErrBlockOversized
 	}
+	// Final Layer: every Parlia block is capped at FinalLayerMaxBlockSize.
+	if v.config.Parlia != nil && block.Size() > params.FinalLayerMaxBlockSize {
+		return ErrBlockOversized
+	}
 	// Check whether the block is already imported.
 	if v.bc.HasBlockAndState(block.Hash(), block.NumberU64()) {
 		return ErrKnownBlock
