@@ -724,6 +724,10 @@ func (h *handler) Start(maxPeers int, maxPeersPerIP int) {
 	h.minedBlockSub = h.eventMux.Subscribe(core.NewMinedBlockEvent{}, core.NewSealedBlockEvent{})
 	go h.minedBroadcastLoop()
 
+	// re-send a stale head so competing forks become visible (Final Layer)
+	h.wg.Add(1)
+	go h.staleHeadRebroadcastLoop()
+
 	// broadcast block range
 	h.wg.Add(1)
 	h.blockRange = newBlockRangeState(h.chain, h.downloader)

@@ -41,6 +41,7 @@ Transactions (add --from <address> to sign for an account that rotated its key)
   flpq tx <rpc> <key.json> <to|create> <valueFL> <datahex> [gas]
   flpq rotate <rpc> <currentKey.json> <newKey.json>
   flpq create-validator <rpc> <operatorKey.json> <consensusKey.json> <selfStakeFL> <moniker> [commissionBps]
+  flpq edit-consensus <rpc> <operatorKey.json> <newConsensusKey.json>   replace a validator's consensus key
   flpq delegate <rpc> <key.json> <operatorAddress> <amountFL>
   flpq undelegate <rpc> <key.json> <operatorAddress> <shares>
   flpq claim <rpc> <key.json> <operatorAddress>
@@ -56,6 +57,7 @@ const stakeHubABI = `[
    {"name":"consensusAddress","type":"address"},{"name":"voteAddress","type":"bytes"},{"name":"blsProof","type":"bytes"},
    {"name":"commission","type":"tuple","components":[{"name":"rate","type":"uint64"},{"name":"maxRate","type":"uint64"},{"name":"maxChangeRate","type":"uint64"}]},
    {"name":"description","type":"tuple","components":[{"name":"moniker","type":"string"},{"name":"identity","type":"string"},{"name":"website","type":"string"},{"name":"details","type":"string"}]}],"outputs":[]},
+ {"type":"function","name":"editConsensusAddress","stateMutability":"nonpayable","inputs":[{"name":"newConsensusAddress","type":"address"},{"name":"consensusProof","type":"bytes"}],"outputs":[]},
  {"type":"function","name":"delegate","stateMutability":"payable","inputs":[{"name":"operatorAddress","type":"address"},{"name":"delegateVotePower","type":"bool"}],"outputs":[]},
  {"type":"function","name":"undelegate","stateMutability":"nonpayable","inputs":[{"name":"operatorAddress","type":"address"},{"name":"shares","type":"uint256"}],"outputs":[]},
  {"type":"function","name":"claim","stateMutability":"nonpayable","inputs":[{"name":"operatorAddress","type":"address"},{"name":"requestNumber","type":"uint256"}],"outputs":[]}
@@ -87,6 +89,8 @@ func main() {
 		err = cmdRotate(args[1:], from)
 	case "create-validator":
 		err = cmdCreateValidator(args[1:], from)
+	case "edit-consensus":
+		err = cmdEditConsensus(args[1:], from)
 	case "delegate":
 		err = cmdDelegate(args[1:], from)
 	case "undelegate":
@@ -454,6 +458,41 @@ func cmdCreateValidator(args []string, from *common.Address) error {
 	value := new(big.Int).Add(stake, big.NewInt(1e18))
 	to := stakeHub
 	return sendPQ(args[0], key, from, &to, value, data, 0)
+}
+
+// cmdEditConsensus moves a validator to a new consensus key. This is how a
+// validator replaces a lost or compromised sealing key: rotating the consensus
+// address in the key registry does not revoke the old key for block seals.
+func cmdEditConsensus(args []string, from *common.Address) error {
+	if err := need(args, 3); err != nil {
+		return err
+	}
+	key, err := loadKey(args[1])
+	if err != nil {
+		return err
+	}
+	consensusKey, err := loadKey(args[2])
+	if err != nil {
+		return err
+	}
+	chainID, err := rpcChainID(args[0])
+	if err != nil {
+		return err
+	}
+	operator := key.Address()
+	if from != nil {
+		operator = *from
+	}
+	proof, err := pq.EncodeValidatorProof(consensusKey, chainID, operator)
+	if err != nil {
+		return err
+	}
+	data, err := packStake("editConsensusAddress", consensusKey.Address(), proof)
+	if err != nil {
+		return err
+	}
+	to := stakeHub
+	return sendPQ(args[0], key, from, &to, new(big.Int), data, 0)
 }
 
 func cmdDelegate(args []string, from *common.Address) error {

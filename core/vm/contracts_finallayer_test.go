@@ -109,3 +109,44 @@ func TestPQDoubleSignEvidence(t *testing.T) {
 		t.Fatal("classical seal accepted")
 	}
 }
+
+// TestPQVerifyValidatorProofLayout feeds the precompile exactly what
+// StakeHub._checkConsensusProof builds: proof[:1] || message || proof[1:].
+// A seal or transaction signature by the same key over the same message must
+// not verify.
+func TestPQVerifyValidatorProofLayout(t *testing.T) {
+	key, err := pq.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	proof, err := pq.EncodeValidatorProof(key, 20261012, op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := pq.ValidatorProofHash(20261012, key.Address(), op)
+	build := func(p []byte) []byte {
+		in := append([]byte{}, p[:1]...)
+		in = append(in, msg...)
+		return append(in, p[1:]...)
+	}
+	pc := &pqVerify{}
+	if out, err := pc.Run(build(proof)); err != nil || out[31] != 1 {
+		t.Fatal("precompile rejected a valid validator proof in the StakeHub layout")
+	}
+	if pc.RequiredGas(build(proof)) != PQVerifyGas {
+		t.Fatal("unexpected precompile gas")
+	}
+	seal, err := pq.EncodeSeal(key, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := pc.Run(build(seal)); out[31] != 0 {
+		t.Fatal("precompile accepted a block seal signature as a contract signature")
+	}
+	txSig, _ := key.Sign(pq.DomainTx, msg)
+	txProof := append(append([]byte{byte(pq.SchemeMLDSA87)}, key.PublicKey()...), txSig...)
+	if out, _ := pc.Run(build(txProof)); out[31] != 0 {
+		t.Fatal("precompile accepted a transaction signature as a contract signature")
+	}
+}

@@ -169,6 +169,14 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 			cs.handler.acceptTxs.Store(true)
 			log.Info("Enable transaction acceptance for already in sync.")
 		}
+		// Final Layer: no peer is ahead of us, so a full-syncing node is in sync.
+		// Without this a restarted node keeps discarding propagated blocks until
+		// some peer is at least two blocks ahead, which never happens when the
+		// network itself is stalled (for example all validators restarted).
+		if mode == downloader.FullSync && !cs.handler.synced.Load() {
+			cs.handler.enableSyncedFeatures()
+			log.Info("No peer is ahead, marking node as synced", "td", ourTD)
+		}
 		// We seem to be in sync according to the legacy rules. In the merge
 		// world, it can also mean we're stuck on the merge block, waiting for
 		// a beacon client. In the latter case, notify the user.

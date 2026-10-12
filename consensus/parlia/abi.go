@@ -4426,6 +4426,11 @@ const stakeABI = `[
                 "name": "newConsensusAddress",
                 "type": "address",
                 "internalType": "address"
+            },
+            {
+                "name": "consensusProof",
+                "type": "bytes",
+                "internalType": "bytes"
             }
         ],
         "outputs": [],

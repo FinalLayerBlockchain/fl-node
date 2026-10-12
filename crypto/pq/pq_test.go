@@ -159,3 +159,52 @@ func TestDomainSeparation(t *testing.T) {
 		}
 	}
 }
+
+// TestValidatorProofHashVector pins ValidatorProofHash to the bytes StakeHub
+// hashes: keccak256(abi.encodePacked("FinalLayer/validator-pop/v1", uint256
+// chainid, address consensus, address operator)). The expected value was
+// computed independently with foundry's cast (abi-encode-packed + keccak) and
+// is asserted by the forge test testValidatorProofHashMatchesGo as well.
+func TestValidatorProofHashVector(t *testing.T) {
+	got := ValidatorProofHash(20261012,
+		common.HexToAddress("0x1111111111111111111111111111111111111111"),
+		common.HexToAddress("0x2222222222222222222222222222222222222222"))
+	want := common.FromHex("0x59469dac0654c3ab96107422aaf84bfb2e30481a1bd352706c265b6fc8835d0b")
+	if !bytes.Equal(got, want) {
+		t.Fatalf("validator proof hash %x, want %x", got, want)
+	}
+}
+
+// TestValidatorProofDomain checks the proof layout and that the proof
+// signature is valid only in the contract domain and only for its operator.
+func TestValidatorProofDomain(t *testing.T) {
+	k, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	proof, err := EncodeValidatorProof(k, 20261012, op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proof) != 1+2592+4627 || Scheme(proof[0]) != SchemeMLDSA87 {
+		t.Fatalf("proof layout: len %d scheme %d", len(proof), proof[0])
+	}
+	pk, sig := proof[1:1+2592], proof[1+2592:]
+	if Address(SchemeMLDSA87, pk) != k.Address() {
+		t.Fatal("proof key does not derive the consensus address")
+	}
+	msg := ValidatorProofHash(20261012, k.Address(), op)
+	if err := Verify(SchemeMLDSA87, DomainContract, pk, msg, sig); err != nil {
+		t.Fatalf("proof rejected in contract domain: %v", err)
+	}
+	for _, d := range []Domain{DomainTx, DomainSeal, DomainRotation, ""} {
+		if Verify(SchemeMLDSA87, d, pk, msg, sig) == nil {
+			t.Fatalf("proof accepted in domain %q", d)
+		}
+	}
+	other := ValidatorProofHash(20261012, k.Address(), common.HexToAddress("0x3333"))
+	if Verify(SchemeMLDSA87, DomainContract, pk, other, sig) == nil {
+		t.Fatal("proof accepted for another operator")
+	}
+}

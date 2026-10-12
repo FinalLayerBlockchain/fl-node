@@ -426,6 +426,18 @@ func (ps *peerSet) peersWithoutBlock(hash common.Hash) []*ethPeer {
 	return list
 }
 
+// allPeers returns a slice of all registered peers.
+func (ps *peerSet) allPeers() []*ethPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	list := make([]*ethPeer, 0, len(ps.peers))
+	for _, p := range ps.peers {
+		list = append(list, p)
+	}
+	return list
+}
+
 // allNonEVNPeers returns a slice of all registered peers that do not have
 // the EVNPeerFlag set.
 func (ps *peerSet) allNonEVNPeers() []*ethPeer {
