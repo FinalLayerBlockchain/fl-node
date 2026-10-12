@@ -41,6 +41,13 @@ const finalLayerStakeABI = `[
    "inputs":[],"outputs":[]}
 ]`
 
+// stakingInflationReservedGas is the block gas the miner keeps free on breathe
+// blocks for distributeStakingInflation: ~138k gas per recipient pool, at most
+// StakeHub.MAX_INFLATION_VALIDATORS (100) pools. System transactions count
+// towards header.GasUsed, so without this reserve a full breathe block would
+// exceed the gas limit and be rejected by every node.
+const stakingInflationReservedGas uint64 = 15_000_000
+
 var flStakeABI = func() abi.ABI {
 	a, err := abi.JSON(strings.NewReader(finalLayerStakeABI))
 	if err != nil {

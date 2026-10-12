@@ -200,6 +200,11 @@ func (s *Snapshot) updateAttestation(header *types.Header, chainConfig *params.C
 	if !chainConfig.IsLuban(header.Number) {
 		return
 	}
+	// Final Layer: BLS vote attestations are never valid, so they never
+	// justify or finalize anything (verifySeal rejects any header carrying one).
+	if true {
+		return
+	}
 
 	// The attestation should have been checked in verify header, update directly
 	attestation, _ := getVoteAttestationFromHeader(header, chainConfig, s.EpochLength)

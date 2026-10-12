@@ -2,7 +2,10 @@ package vm
 
 import (
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pq"
+	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 // Final Layer precompile policy.
@@ -36,7 +39,7 @@ var classicalSignaturePrecompiles = []common.Address{
 	common.BytesToAddress([]byte{0x65}),       // IAVL proof (BC light client)
 	common.BytesToAddress([]byte{0x66}),       // BLS signature verify
 	common.BytesToAddress([]byte{0x67}),       // CometBFT light block validate
-	common.BytesToAddress([]byte{0x68}),       // double sign evidence (ECDSA headers)
+	common.BytesToAddress([]byte{0x68}),       // double sign evidence (ECDSA headers), replaced by pqDoubleSignEvidence
 	common.BytesToAddress([]byte{0x69}),       // secp256k1 signature recover
 	common.BytesToAddress([]byte{0x01, 0x00}), // P256VERIFY (secp256r1)
 }
@@ -116,5 +119,69 @@ func applyFinalLayerPrecompilePolicy() {
 			set[addr] = &disabledPrecompile{name: name}
 		}
 		set[PQVerifyAddress] = &pqVerify{}
+		// Double-sign slashing stays available, verifying ML-DSA header seals.
+		set[pqDoubleSignEvidenceAddress] = &pqDoubleSignEvidence{}
 	}
 }
+
+// pqDoubleSignEvidenceAddress is the BSC double-sign evidence precompile used
+// by SlashIndicator.submitDoubleSignEvidence.
+var pqDoubleSignEvidenceAddress = common.BytesToAddress([]byte{0x68})
+
+// pqDoubleSignEvidence is the BSC double-sign evidence check with post-quantum
+// header seals: two different headers at the same height and parent, both
+// sealed by the same ML-DSA key.
+//
+// Input:  rlp(DoubleSignEvidence{ChainId, HeaderBytes1, HeaderBytes2})
+// Output: signer address (20 bytes) || evidence height (32 bytes)
+type pqDoubleSignEvidence struct{}
+
+func (c *pqDoubleSignEvidence) RequiredGas(input []byte) uint64 {
+	return params.DoubleSignEvidenceVerifyGas + 2*PQVerifyGas
+}
+
+func (c *pqDoubleSignEvidence) Run(input []byte) ([]byte, error) {
+	evidence := &DoubleSignEvidence{}
+	if err := rlp.DecodeBytes(input, evidence); err != nil || evidence.ChainId == nil {
+		return nil, ErrExecutionReverted
+	}
+	header1, header2 := &types.Header{}, &types.Header{}
+	if err := rlp.DecodeBytes(evidence.HeaderBytes1, header1); err != nil {
+		return nil, ErrExecutionReverted
+	}
+	if err := rlp.DecodeBytes(evidence.HeaderBytes2, header2); err != nil {
+		return nil, ErrExecutionReverted
+	}
+	if header1.Number == nil || header2.Number == nil || len(header1.Number.Bytes()) > 32 {
+		return nil, errInvalidEvidence
+	}
+	if header1.Number.Cmp(header2.Number) != 0 || header1.ParentHash != header2.ParentHash {
+		return nil, errInvalidEvidence
+	}
+	if len(header1.Extra) < pq.SealSize || len(header2.Extra) < pq.SealSize {
+		return nil, errInvalidEvidence
+	}
+	msgHash1 := types.SealHash(header1, evidence.ChainId)
+	msgHash2 := types.SealHash(header2, evidence.ChainId)
+	if msgHash1 == msgHash2 {
+		return nil, errInvalidEvidence
+	}
+	signer1, err := pq.VerifySeal(header1.Extra[len(header1.Extra)-pq.SealSize:], msgHash1.Bytes())
+	if err != nil {
+		return nil, ErrExecutionReverted
+	}
+	signer2, err := pq.VerifySeal(header2.Extra[len(header2.Extra)-pq.SealSize:], msgHash2.Bytes())
+	if err != nil {
+		return nil, ErrExecutionReverted
+	}
+	if signer1 != signer2 {
+		return nil, errInvalidEvidence
+	}
+	out := make([]byte, 52) // 20 + 32
+	copy(out[:20], signer1.Bytes())
+	height := header1.Number.Bytes()
+	copy(out[52-len(height):], height)
+	return out, nil
+}
+
+func (c *pqDoubleSignEvidence) Name() string { return "PQ_VERIFY_DOUBLE_SIGN_EVIDENCE" }

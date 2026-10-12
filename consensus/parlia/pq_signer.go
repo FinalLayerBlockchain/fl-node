@@ -60,20 +60,27 @@ func PQSignerFns(key *pq.PrivateKey) (common.Address, SignerFn, SignerTxFn) {
 		if acc.Address != val {
 			return nil, errUnauthorizedValidator(acc.Address.Hex())
 		}
-		unsigned := pqTxFrom(tx, val, key.Scheme, chainID)
+		// Transactions the node sends itself (e.g. node ID registration) are
+		// gas-estimated without the PQ authorization surcharge. System
+		// transactions (zero gas price) must keep the exact expected gas.
+		gas := tx.Gas()
+		if tx.GasPrice().Sign() != 0 {
+			gas += pq.AuthGas(key.Scheme)
+		}
+		unsigned := pqTxFrom(tx, val, key.Scheme, chainID, gas)
 		return types.SignPQTx(unsigned, types.LatestSignerForChainID(chainID), key)
 	}
 	return val, signFn, signTxFn
 }
 
 // pqTxFrom builds an unsigned PQ transaction carrying the payload of tx.
-func pqTxFrom(tx *types.Transaction, from common.Address, scheme pq.Scheme, chainID *big.Int) *types.Transaction {
+func pqTxFrom(tx *types.Transaction, from common.Address, scheme pq.Scheme, chainID *big.Int, gas uint64) *types.Transaction {
 	return types.NewTx(&types.PQTx{
 		ChainID:   new(big.Int).Set(chainID),
 		Nonce:     tx.Nonce(),
 		GasTipCap: new(big.Int).Set(tx.GasTipCap()),
 		GasFeeCap: new(big.Int).Set(tx.GasFeeCap()),
-		Gas:       tx.Gas(),
+		Gas:       gas,
 		To:        tx.To(),
 		Value:     new(big.Int).Set(tx.Value()),
 		Data:      tx.Data(),

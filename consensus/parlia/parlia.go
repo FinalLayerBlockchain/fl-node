@@ -852,7 +852,8 @@ func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Hea
 		log.Warn("Verify vote attestation failed", "error", err, "hash", header.Hash(), "number", header.Number,
 			"parent", header.ParentHash, "coinbase", header.Coinbase, "extra", common.Bytes2Hex(header.Extra))
 		verifyVoteAttestationErrorCounter.Inc(1)
-		if chain.Config().IsPlato(header.Number) {
+		// Final Layer: an attestation is never accepted, also before Plato.
+		if chain.Config().IsPlato(header.Number) || errors.Is(err, errFastFinalityOff) {
 			return err
 		}
 	}
@@ -1294,7 +1295,8 @@ func (p *Parlia) EstimateGasReservedForSystemTxs(chain consensus.ChainHeaderRead
 	}
 
 	// params.SystemTxsGasHardLimit > (depositTxGas+slashTxGas+finalityRewardTxGas+updateValidatorTxGas)*150/100
-	return params.SystemTxsGasHardLimit
+	// Final Layer: breathe blocks also carry the staking inflation system tx.
+	return params.SystemTxsGasHardLimit + stakingInflationReservedGas
 }
 
 // Finalize implements consensus.Engine, ensuring no uncles are set, nor block
