@@ -121,10 +121,6 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.GasFeeCapIntCmp(tx.GasTipCap()) < 0 {
 		return core.ErrTipAboveFeeCap
 	}
-	// Make sure the transaction is signed properly
-	if _, err := types.Sender(signer, tx); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidSender, err)
-	}
 	// Limit nonce to 2^64-1 per EIP-2681
 	if tx.Nonce()+1 < tx.Nonce() {
 		return core.ErrNonceMax
@@ -154,6 +150,11 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// Ensure the gasprice is high enough to cover the requirement of the calling pool
 	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
+	}
+	// Make sure the transaction is signed properly. Final Layer: the ML-DSA
+	// verify costs about 200us, so it runs after every cheap stateless check.
+	if _, err := types.Sender(signer, tx); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidSender, err)
 	}
 	if tx.Type() == types.BlobTxType {
 		return ValidateBlobTx(tx, head, opts)

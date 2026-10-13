@@ -1,11 +1,13 @@
 package legacypool
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pq"
 )
@@ -72,5 +74,34 @@ func TestPoolDropsRetiredPQKeys(t *testing.T) {
 			t.Error(err)
 		}
 		pool.Close()
+	}
+}
+
+// A forged signature on an underpriced transaction is rejected at pool entry
+// for the price, before the ML-DSA verify runs.
+func TestPoolBasicsRejectCheapBeforeVerify(t *testing.T) {
+	pool, _ := setupPoolWithConfig(eip1559Config)
+	defer pool.Close()
+	key, err := pq.KeyFromSeed(pq.SchemeMLDSA87, [32]byte{43})
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := common.HexToAddress("0x1234")
+	inner := &types.PQTx{ChainID: eip1559Config.ChainID, GasTipCap: big.NewInt(0), GasFeeCap: big.NewInt(10),
+		Gas: 137000, To: &to, Value: big.NewInt(1), From: key.Address(), Scheme: uint8(key.Scheme)}
+	tx, err := types.SignPQTx(types.NewTx(inner), pool.signer, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pub, sig, _ := tx.PQAuth()
+	inner.PubKey = append([]byte(nil), pub...)
+	inner.Signature = append([]byte(nil), sig...)
+	inner.Signature[0] ^= 0xff
+	if err := pool.ValidateTxBasics(types.NewTx(inner)); !errors.Is(err, txpool.ErrTxGasPriceTooLow) {
+		t.Fatalf("got %v, want %v", err, txpool.ErrTxGasPriceTooLow)
+	}
+	inner.GasTipCap = big.NewInt(10)
+	if err := pool.ValidateTxBasics(types.NewTx(inner)); !errors.Is(err, txpool.ErrInvalidSender) {
+		t.Fatalf("forged signature: got %v, want %v", err, txpool.ErrInvalidSender)
 	}
 }

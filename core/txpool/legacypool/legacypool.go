@@ -555,6 +555,19 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) (map[common.Address
 // This check is meant as an early check which only needs to be performed once,
 // and does not require the pool mutex to be held.
 func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
+	// Final Layer: the stateless checks run first so a cheap rejection never
+	// pays for the ML-DSA verify; ValidateTransaction verifies the signature
+	// last, and the Sender call below is then a cache hit.
+	opts := &txpool.ValidationOptions{
+		Config: pool.chainconfig,
+		Accept: 0 |
+			1<<types.PQTxType,
+		MaxSize: txMaxSize,
+		MinTip:  pool.gasTip.Load().ToBig(),
+	}
+	if err := txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts); err != nil {
+		return err
+	}
 	sender, err := types.Sender(pool.signer, tx)
 	if err != nil {
 		return err
@@ -565,15 +578,7 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 			return txpool.ErrInBlackList
 		}
 	}
-
-	opts := &txpool.ValidationOptions{
-		Config: pool.chainconfig,
-		Accept: 0 |
-			1<<types.PQTxType,
-		MaxSize: txMaxSize,
-		MinTip:  pool.gasTip.Load().ToBig(),
-	}
-	return txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts)
+	return nil
 }
 
 // validateTx checks whether a transaction is valid according to the consensus
