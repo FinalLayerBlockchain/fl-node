@@ -1259,6 +1259,7 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		}
 		// Reset from the old head to the new, rescheduling any reorged transactions
 		pool.reset(reset.oldHead, reset.newHead)
+		pool.dropRetiredPQKeys()
 
 		// Nonces were reset, discard any events that became stale
 		for addr := range events {
@@ -1558,6 +1559,33 @@ func (pool *LegacyPool) truncateQueue() {
 // Note: transactions are not marked as removed in the priced list because re-heaping
 // is always explicitly triggered by SetBaseFee and it would be unnecessary and wasteful
 // to trigger a re-heap is this function
+// dropRetiredPQKeys removes transactions signed by a key the account no longer
+// authorizes in the current state (Final Layer key rotation).
+// Admission checks the key only once, so without this an old-key transaction
+// stays in the pool after a rotation, can never execute, and blocks the new
+// key's transaction at the same nonce as an underpriced replacement. A reorg
+// back to the old key drops new-key transactions the same way.
+func (pool *LegacyPool) dropRetiredPQKeys() {
+	var stale []common.Hash
+	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+		scheme, pk, _, ok := tx.PQAuth()
+		if !ok {
+			return true
+		}
+		from, err := types.Sender(pool.signer, tx)
+		if err != nil || core.CheckPQAuthorization(pool.currentState, from, scheme, pk) != nil {
+			stale = append(stale, hash)
+		}
+		return true
+	})
+	for _, hash := range stale {
+		pool.removeTx(hash, true, true)
+	}
+	if len(stale) > 0 {
+		log.Debug("Dropped transactions signed by retired PQ keys", "count", len(stale))
+	}
+}
+
 func (pool *LegacyPool) demoteUnexecutables() {
 	// Iterate over all accounts and demote any non-executable transactions
 	gasLimit := pool.currentHead.Load().GasLimit

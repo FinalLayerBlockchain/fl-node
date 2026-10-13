@@ -850,7 +850,7 @@ func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Hea
 	// Verify vote attestation for fast finality.
 	if err := p.verifyVoteAttestation(chain, header, parents); err != nil {
 		log.Warn("Verify vote attestation failed", "error", err, "hash", header.Hash(), "number", header.Number,
-			"parent", header.ParentHash, "coinbase", header.Coinbase, "extra", common.Bytes2Hex(header.Extra))
+			"parent", header.ParentHash, "coinbase", header.Coinbase, "extraLen", len(header.Extra))
 		verifyVoteAttestationErrorCounter.Inc(1)
 		// Final Layer: an attestation is never accepted, also before Plato.
 		return err
@@ -2149,6 +2149,10 @@ func (p *Parlia) applyTransaction(
 		cumulativeGasUsed += (*receipts)[n-1].CumulativeGasUsed
 	}
 	tracingReceipt = types.NewReceipt(root, false, cumulativeGasUsed)
+	// Final Layer: system transactions are PQ transactions; their receipts must
+	// carry that type, or the receipt root differs from the one rebuilt from
+	// stored receipts (DeriveFields takes the type from the tx).
+	tracingReceipt.Type = expectedTx.Type()
 	tracingReceipt.TxHash = expectedTx.Hash()
 	tracingReceipt.GasUsed = gasUsed
 

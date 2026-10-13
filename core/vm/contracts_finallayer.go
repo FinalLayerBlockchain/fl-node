@@ -144,7 +144,16 @@ func (c *pqDoubleSignEvidence) RequiredGas(input []byte) uint64 {
 	return params.DoubleSignEvidenceVerifyGas + 2*PQVerifyGas
 }
 
+// maxDoubleSignEvidenceSize bounds the evidence the fixed gas pays for:
+// decoding and hashing scale with the input. Real evidence is two
+// headers; the largest are epoch headers with 50 validators (7,220 byte seal
+// + 50 * 68 bytes of validators + fixed fields each), about 22.6 KB in total.
+const maxDoubleSignEvidenceSize = 32 * 1024
+
 func (c *pqDoubleSignEvidence) Run(input []byte) ([]byte, error) {
+	if len(input) > maxDoubleSignEvidenceSize {
+		return nil, ErrExecutionReverted
+	}
 	evidence := &DoubleSignEvidence{}
 	if err := rlp.DecodeBytes(input, evidence); err != nil || evidence.ChainId == nil {
 		return nil, ErrExecutionReverted
