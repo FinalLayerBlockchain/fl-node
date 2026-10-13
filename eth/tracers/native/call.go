@@ -226,6 +226,11 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 	if err != nil {
 		return
 	}
+	// No top-level frame was emitted: GetResult reports the error instead of
+	// this callback panicking.
+	if len(t.callstack) == 0 {
+		return
+	}
 	if receipt != nil {
 		t.callstack[0].GasUsed = receipt.GasUsed
 	}
@@ -236,6 +241,9 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 }
 
 func (t *callTracer) OnSystemTxFixIntrinsicGas(intrinsicGas uint64) {
+	if len(t.callstack) == 0 {
+		return
+	}
 	t.callstack[0].GasUsed -= intrinsicGas
 }
 

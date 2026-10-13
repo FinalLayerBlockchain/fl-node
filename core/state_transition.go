@@ -678,7 +678,15 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		// Execute the transaction's call. A PQ transaction addressed to the key
 		// registry is a key rotation and is handled natively.
 		if msg.PQPubKey != nil && *msg.To == pq.RegistryAddress {
+			// Native operations must emit a top-level call frame for tracers.
+			startGas := st.gasRemaining.RegularGas
+			if hooks := st.evm.Config.Tracer; hooks != nil && hooks.OnEnter != nil {
+				hooks.OnEnter(0, byte(vm.CALL), msg.From, *msg.To, msg.Data, startGas, value.ToBig())
+			}
 			vmerr = st.applyPQRotation()
+			if hooks := st.evm.Config.Tracer; hooks != nil && hooks.OnExit != nil {
+				hooks.OnExit(0, nil, startGas-st.gasRemaining.RegularGas, vm.VMErrorFromErr(vmerr), vmerr != nil)
+			}
 		} else {
 			ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
 		}

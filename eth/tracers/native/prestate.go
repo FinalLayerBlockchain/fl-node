@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/eth/tracers/internal"
 	"github.com/ethereum/go-ethereum/log"
@@ -194,6 +195,11 @@ func (t *prestateTracer) OnTxStart(env *tracing.VMContext, tx *types.Transaction
 	t.lookupAccount(from)
 	t.lookupAccount(t.to)
 	t.lookupAccount(env.Coinbase)
+	// PQ authorization reads registry storage, and native rotation may write it.
+	if _, _, _, ok := tx.PQAuth(); ok {
+		t.lookupAccount(pq.RegistryAddress)
+		t.lookupStorage(pq.RegistryAddress, pq.RegistrySlot(from))
+	}
 
 	// Add accounts with authorizations to the prestate before they get applied.
 	for _, auth := range tx.SetCodeAuthorizations() {
