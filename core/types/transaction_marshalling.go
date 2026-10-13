@@ -19,6 +19,7 @@ package types
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -347,6 +348,9 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		}
 		if dec.From == nil || dec.PQScheme == nil || dec.PQPublicKey == nil || dec.PQSignature == nil {
 			return errors.New("missing post-quantum authorization fields in transaction")
+		}
+		if *dec.PQScheme > math.MaxUint8 {
+			return errors.New("pqScheme does not fit in one byte")
 		}
 		itx.From = *dec.From
 		itx.Scheme = uint8(*dec.PQScheme)

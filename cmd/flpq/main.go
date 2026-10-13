@@ -65,12 +65,15 @@ const stakeHubABI = `[
 ]`
 
 func main() {
-	args, from := extractFrom(os.Args[1:])
+	args, from, err := extractFrom(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
 	if len(args) == 0 {
 		fmt.Print(usage)
 		os.Exit(1)
 	}
-	var err error
 	switch args[0] {
 	case "keygen":
 		err = cmdKeygen(args[1:])
@@ -110,19 +113,31 @@ func main() {
 	}
 }
 
-func extractFrom(in []string) ([]string, *common.Address) {
+func extractFrom(in []string) ([]string, *common.Address, error) {
 	var out []string
 	var from *common.Address
 	for i := 0; i < len(in); i++ {
 		if in[i] == "--from" && i+1 < len(in) {
-			a := common.HexToAddress(in[i+1])
+			a, err := parseAddr(in[i+1])
+			if err != nil {
+				return nil, nil, err
+			}
 			from = &a
 			i++
 			continue
 		}
 		out = append(out, in[i])
 	}
-	return out, from
+	return out, from, nil
+}
+
+// parseAddr parses a 20-byte hex address and rejects anything else, so a
+// typo can never turn into a different, valid looking address.
+func parseAddr(s string) (common.Address, error) {
+	if !common.IsHexAddress(s) {
+		return common.Address{}, fmt.Errorf("invalid address %q", s)
+	}
+	return common.HexToAddress(s), nil
 }
 
 func need(args []string, n int) error {
@@ -195,7 +210,11 @@ func cmdBalance(args []string) error {
 	if err != nil {
 		return err
 	}
-	bal, err := c.BalanceAt(context.Background(), common.HexToAddress(args[1]), nil)
+	acct, err := parseAddr(args[1])
+	if err != nil {
+		return err
+	}
+	bal, err := c.BalanceAt(context.Background(), acct, nil)
 	if err != nil {
 		return err
 	}
@@ -211,7 +230,10 @@ func cmdRegistry(args []string) error {
 	if err != nil {
 		return err
 	}
-	acct := common.HexToAddress(args[1])
+	acct, err := parseAddr(args[1])
+	if err != nil {
+		return err
+	}
 	v, err := c.StorageAt(context.Background(), pq.RegistryAddress, pq.RegistrySlot(acct), nil)
 	if err != nil {
 		return err
@@ -232,8 +254,15 @@ func cmdCall(args []string) error {
 	if err != nil {
 		return err
 	}
-	to := common.HexToAddress(args[1])
-	out, err := c.CallContract(context.Background(), ethereum.CallMsg{To: &to, Data: common.FromHex(args[2])}, nil)
+	to, err := parseAddr(args[1])
+	if err != nil {
+		return err
+	}
+	input, err := hexutil.Decode(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid call data: %w", err)
+	}
+	out, err := c.CallContract(context.Background(), ethereum.CallMsg{To: &to, Data: input}, nil)
 	if err != nil {
 		return err
 	}
@@ -242,7 +271,8 @@ func cmdCall(args []string) error {
 }
 
 // sendPQ builds, signs, broadcasts a PQ transaction and waits for the receipt.
-func sendPQ(rpc string, key *pq.PrivateKey, from *common.Address, to *common.Address, value *big.Int, data []byte, gas uint64) error {
+// A non-nil fixedNonce is used as is (a rotation proof is bound to it).
+func sendPQ(rpc string, key *pq.PrivateKey, from *common.Address, to *common.Address, value *big.Int, data []byte, gas uint64, fixedNonce *uint64) error {
 	ctx := context.Background()
 	c, err := dial(rpc)
 	if err != nil {
@@ -256,8 +286,10 @@ func sendPQ(rpc string, key *pq.PrivateKey, from *common.Address, to *common.Add
 	if err != nil {
 		return err
 	}
-	nonce, err := c.PendingNonceAt(ctx, sender)
-	if err != nil {
+	var nonce uint64
+	if fixedNonce != nil {
+		nonce = *fixedNonce
+	} else if nonce, err = c.PendingNonceAt(ctx, sender); err != nil {
 		return err
 	}
 	price, err := c.SuggestGasPrice(ctx)
@@ -320,12 +352,15 @@ func cmdSend(args []string, from *common.Address) error {
 	if err != nil {
 		return err
 	}
-	to := common.HexToAddress(args[2])
+	to, err := parseAddr(args[2])
+	if err != nil {
+		return err
+	}
 	amt, err := parseFL(args[3])
 	if err != nil {
 		return err
 	}
-	return sendPQ(args[0], key, from, &to, amt, nil, 0)
+	return sendPQ(args[0], key, from, &to, amt, nil, 0, nil)
 }
 
 func cmdTx(args []string, from *common.Address) error {
@@ -338,18 +373,27 @@ func cmdTx(args []string, from *common.Address) error {
 	}
 	var to *common.Address
 	if args[2] != "create" {
-		a := common.HexToAddress(args[2])
+		a, err := parseAddr(args[2])
+		if err != nil {
+			return err
+		}
 		to = &a
 	}
 	amt, err := parseFL(args[3])
 	if err != nil {
 		return err
 	}
+	data, err := hexutil.Decode(args[4])
+	if err != nil {
+		return fmt.Errorf("invalid data: %w", err)
+	}
 	var gas uint64
 	if len(args) > 5 {
-		gas, _ = strconv.ParseUint(args[5], 10, 64)
+		if gas, err = strconv.ParseUint(args[5], 10, 64); err != nil {
+			return fmt.Errorf("invalid gas %q", args[5])
+		}
 	}
-	return sendPQ(args[0], key, from, to, amt, common.FromHex(args[4]), gas)
+	return sendPQ(args[0], key, from, to, amt, data, gas, nil)
 }
 
 func cmdRotate(args []string, from *common.Address) error {
@@ -392,7 +436,7 @@ func cmdRotate(args []string, from *common.Address) error {
 	}
 	to := pq.RegistryAddress
 	fmt.Printf("rotating %s to the key of %s (%s)\n", acct.Hex(), args[2], pq.Name(next.Scheme))
-	return sendPQ(args[0], cur, &acct, &to, new(big.Int), data, gas)
+	return sendPQ(args[0], cur, &acct, &to, new(big.Int), data, gas, &nonce)
 }
 
 func packStake(method string, args ...interface{}) ([]byte, error) {
@@ -445,7 +489,9 @@ func cmdCreateValidator(args []string, from *common.Address) error {
 	}
 	commission := uint64(1000)
 	if len(args) > 5 {
-		commission, _ = strconv.ParseUint(args[5], 10, 64)
+		if commission, err = strconv.ParseUint(args[5], 10, 64); err != nil {
+			return fmt.Errorf("invalid commission %q", args[5])
+		}
 	}
 	type comm struct{ Rate, MaxRate, MaxChangeRate uint64 }
 	type desc struct{ Moniker, Identity, Website, Details string }
@@ -458,7 +504,7 @@ func cmdCreateValidator(args []string, from *common.Address) error {
 	// createValidator locks 1 FL on top of the self delegation.
 	value := new(big.Int).Add(stake, big.NewInt(1e18))
 	to := stakeHub
-	return sendPQ(args[0], key, from, &to, value, data, 0)
+	return sendPQ(args[0], key, from, &to, value, data, 0, nil)
 }
 
 // cmdEditConsensus moves a validator to a new consensus key. This is how a
@@ -500,7 +546,7 @@ func cmdEditConsensus(args []string, from *common.Address) error {
 		return err
 	}
 	to := stakeHub
-	return sendPQ(args[0], key, from, &to, new(big.Int), data, 0)
+	return sendPQ(args[0], key, from, &to, new(big.Int), data, 0, nil)
 }
 
 func cmdDelegate(args []string, from *common.Address) error {
@@ -515,12 +561,16 @@ func cmdDelegate(args []string, from *common.Address) error {
 	if err != nil {
 		return err
 	}
-	data, err := packStake("delegate", common.HexToAddress(args[2]), false)
+	operator, err := parseAddr(args[2])
+	if err != nil {
+		return err
+	}
+	data, err := packStake("delegate", operator, false)
 	if err != nil {
 		return err
 	}
 	to := stakeHub
-	return sendPQ(args[0], key, from, &to, amt, data, 0)
+	return sendPQ(args[0], key, from, &to, amt, data, 0, nil)
 }
 
 func cmdUndelegate(args []string, from *common.Address) error {
@@ -535,12 +585,16 @@ func cmdUndelegate(args []string, from *common.Address) error {
 	if !ok {
 		return errors.New("shares must be an integer")
 	}
-	data, err := packStake("undelegate", common.HexToAddress(args[2]), shares)
+	operator, err := parseAddr(args[2])
+	if err != nil {
+		return err
+	}
+	data, err := packStake("undelegate", operator, shares)
 	if err != nil {
 		return err
 	}
 	to := stakeHub
-	return sendPQ(args[0], key, from, &to, new(big.Int), data, 0)
+	return sendPQ(args[0], key, from, &to, new(big.Int), data, 0, nil)
 }
 
 func cmdClaim(args []string, from *common.Address) error {
@@ -551,12 +605,16 @@ func cmdClaim(args []string, from *common.Address) error {
 	if err != nil {
 		return err
 	}
-	data, err := packStake("claim", common.HexToAddress(args[2]), big.NewInt(0))
+	operator, err := parseAddr(args[2])
+	if err != nil {
+		return err
+	}
+	data, err := packStake("claim", operator, big.NewInt(0))
 	if err != nil {
 		return err
 	}
 	to := stakeHub
-	return sendPQ(args[0], key, from, &to, new(big.Int), data, 0)
+	return sendPQ(args[0], key, from, &to, new(big.Int), data, 0, nil)
 }
 
 // cmdGenesisValidators prints the RLP validator set package used by
@@ -576,7 +634,10 @@ func cmdGenesisValidators(args []string) error {
 	var vals []val
 	extra := make([]byte, 32)
 	for _, a := range args {
-		addr := common.HexToAddress(a)
+		addr, err := parseAddr(a)
+		if err != nil {
+			return err
+		}
 		vals = append(vals, val{addr, addr, addr, 100, voteIdentifier(addr)})
 		extra = append(extra, addr.Bytes()...)
 	}

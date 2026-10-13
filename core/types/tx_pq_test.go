@@ -148,3 +148,26 @@ func TestClassicalSignaturesRejected(t *testing.T) {
 		t.Fatalf("pre-Berlin signer rejected PQ tx: %v", err)
 	}
 }
+
+// A pqScheme above one byte must be rejected, not wrapped (0x101 -> 0x01).
+func TestPQTxJSONSchemeOverflow(t *testing.T) {
+	key, _ := pq.GenerateKey()
+	tx, err := SignPQTx(newTestPQTx(key.Address()), LatestSignerForChainID(big.NewInt(7777)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := json.Marshal(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]interface{}
+	if err := json.Unmarshal(js, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["pqScheme"] = "0x101"
+	bad, _ := json.Marshal(fields)
+	var dec Transaction
+	if err := json.Unmarshal(bad, &dec); err == nil {
+		t.Fatal("pqScheme 0x101 accepted")
+	}
+}
