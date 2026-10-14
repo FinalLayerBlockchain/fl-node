@@ -206,6 +206,11 @@ func checkFinalLayerBlockSize(config *params.ChainConfig, block *types.Block) er
 	if config.Parlia != nil && block.Size() > params.FinalLayerMaxBlockSize {
 		return fmt.Errorf("%w: %d > %d bytes", errFinalLayerBlockOversized, block.Size(), params.FinalLayerMaxBlockSize)
 	}
+	// system txs are added after the user gas pool closed; importers reject
+	// a block whose total gas exceeds the limit, so never seal one
+	if block.GasUsed() > block.GasLimit() {
+		return fmt.Errorf("assembled block exceeds gas limit: %d > %d", block.GasUsed(), block.GasLimit())
+	}
 	return nil
 }
 
