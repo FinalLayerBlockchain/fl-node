@@ -676,19 +676,23 @@ func (s *Ethereum) updateNodeID(parlia *parlia.Parlia) error {
 		registeredSet[id] = struct{}{}
 	}
 
-	// Handle removals first
-	if err := s.handleRemovals(parlia, nonce, registeredSet); err != nil {
+	// Handle removals first; only a submitted removal consumes a nonce
+	removed, err := s.handleRemovals(parlia, nonce, registeredSet)
+	if err != nil {
 		return err
 	}
-	nonce++
+	if removed {
+		nonce++
+	}
 
 	// Handle additions
 	return s.handleAdditions(parlia, nonce, registeredSet)
 }
 
-func (s *Ethereum) handleRemovals(parlia *parlia.Parlia, nonce uint64, registeredSet map[enode.ID]struct{}) error {
+// handleRemovals reports whether it submitted a removal transaction.
+func (s *Ethereum) handleRemovals(parlia *parlia.Parlia, nonce uint64, registeredSet map[enode.ID]struct{}) (bool, error) {
 	if len(s.config.EVNNodeIDsToRemove) == 0 {
-		return nil
+		return false, nil
 	}
 
 	// Handle wildcard removal
@@ -697,13 +701,13 @@ func (s *Ethereum) handleRemovals(parlia *parlia.Parlia, nonce uint64, registere
 		if s.config.EVNNodeIDsToRemove[0] == zeroID {
 			trx, err := parlia.RemoveNodeIDs([]enode.ID{}, nonce)
 			if err != nil {
-				return fmt.Errorf("failed to create node ID removal transaction: %v", err)
+				return false, fmt.Errorf("failed to create node ID removal transaction: %v", err)
 			}
-			if err := s.txPool.Add([]*types.Transaction{trx}, false); err != nil {
-				return fmt.Errorf("failed to add node ID removal transaction to pool: %v", err)
+			if errs := s.txPool.Add([]*types.Transaction{trx}, false); len(errs) > 0 && errs[0] != nil {
+				return false, fmt.Errorf("failed to add node ID removal transaction to pool: %v", errs)
 			}
 			log.Info("Submitted node ID removal transaction for all node IDs")
-			return nil
+			return true, nil
 		}
 	}
 
@@ -729,18 +733,18 @@ func (s *Ethereum) handleRemovals(parlia *parlia.Parlia, nonce uint64, registere
 
 	if len(nodeIDsToRemove) == 0 {
 		log.Debug("No node IDs to remove after filtering")
-		return nil
+		return false, nil
 	}
 
 	trx, err := parlia.RemoveNodeIDs(nodeIDsToRemove, nonce)
 	if err != nil {
-		return fmt.Errorf("failed to create node ID removal transaction: %v", err)
+		return false, fmt.Errorf("failed to create node ID removal transaction: %v", err)
 	}
 	if errs := s.txPool.Add([]*types.Transaction{trx}, false); len(errs) > 0 && errs[0] != nil {
-		return fmt.Errorf("failed to add node ID removal transaction to pool: %v", errs)
+		return false, fmt.Errorf("failed to add node ID removal transaction to pool: %v", errs)
 	}
 	log.Info("Submitted node ID removal transaction", "nodeIDs", nodeIDsToRemove)
-	return nil
+	return true, nil
 }
 
 func (s *Ethereum) handleAdditions(parlia *parlia.Parlia, nonce uint64, registeredSet map[enode.ID]struct{}) error {
