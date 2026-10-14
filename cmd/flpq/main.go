@@ -171,15 +171,27 @@ func cmdKeygen(args []string) error {
 	if err := need(args, 1); err != nil {
 		return err
 	}
-	if _, err := os.Stat(args[0]); err == nil {
-		return fmt.Errorf("%s already exists, refusing to overwrite", args[0])
-	}
 	k, err := pq.GenerateKey()
 	if err != nil {
 		return err
 	}
 	raw, _ := json.MarshalIndent(k.ToKeyFile(), "", "  ")
-	if err := os.WriteFile(args[0], raw, 0o600); err != nil {
+	// O_EXCL: never overwrite an existing key file, even if one appears
+	// between a check and the write.
+	f, err := os.OpenFile(args[0], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%s already exists, refusing to overwrite", args[0])
+		}
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		os.Remove(args[0])
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(args[0])
 		return err
 	}
 	fmt.Println(k.Address().Hex())

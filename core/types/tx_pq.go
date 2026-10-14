@@ -143,7 +143,8 @@ func (tx *Transaction) PQFrom() (common.Address, bool) {
 // PQAuth returns the scheme, public key and signature of a PQ transaction.
 func (tx *Transaction) PQAuth() (pq.Scheme, []byte, []byte, bool) {
 	if p, ok := tx.inner.(*PQTx); ok {
-		return pq.Scheme(p.Scheme), p.PubKey, p.Signature, true
+		// copies: the sender cache must not outlive a caller mutating these
+		return pq.Scheme(p.Scheme), common.CopyBytes(p.PubKey), common.CopyBytes(p.Signature), true
 	}
 	return 0, nil, nil, false
 }
