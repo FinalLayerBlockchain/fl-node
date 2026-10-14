@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pq"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -626,6 +627,14 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database, tracer *tra
 	}
 	if err := config.CheckConfigForkOrder(); err != nil {
 		return nil, err
+	}
+	// Final Layer: rotations store keys under the registry account. If that
+	// account is empty (no nonce, no code) EIP-158 deletes it, storage and
+	// all, at the end of every block, silently undoing each rotation.
+	if config.Parlia != nil && config.ChainID != nil && config.ChainID.Uint64() == 20261012 {
+		if acc, ok := g.Alloc[pq.RegistryAddress]; !ok || (acc.Nonce == 0 && len(acc.Code) == 0) {
+			return nil, fmt.Errorf("genesis must allocate the PQ key registry %s with a nonce or code", pq.RegistryAddress.Hex())
+		}
 	}
 	if config.Clique != nil && len(g.ExtraData) < 32+crypto.SignatureLength {
 		return nil, errors.New("can't start clique chain without signers")

@@ -312,8 +312,15 @@ func (p *Parlia) IsSystemTransaction(tx *types.Transaction, header *types.Header
 	// Final Layer: a system transaction must be signed by the producer's own
 	// consensus key, i.e. the carried public key derives the coinbase address.
 	scheme, pk, _, ok := tx.PQAuth()
-	if !ok || pq.Address(scheme, pk) != header.Coinbase {
+	if !ok {
 		return false, errPQSystemTx
+	}
+	if pq.Address(scheme, pk) != header.Coinbase {
+		// A coinbase account that rotated its key in the registry can still
+		// send ordinary zero-price transactions to a system contract; treat
+		// them as user transactions (authorized via the registry) instead of
+		// invalidating the producer's own block.
+		return false, nil
 	}
 	return true, nil
 }

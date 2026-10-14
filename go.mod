@@ -14,6 +14,7 @@ require (
 	github.com/bnb-chain/fastssz v0.1.2
 	github.com/bnb-chain/ics23 v0.1.0
 	github.com/cespare/cp v1.1.1
+	github.com/cloudflare/circl v1.6.1
 	github.com/cloudflare/cloudflare-go v0.114.0
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/cometbft/cometbft v0.37.0
@@ -97,7 +98,6 @@ require (
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
-	github.com/cloudflare/circl v1.6.1 // indirect
 	github.com/ferranbt/fastssz v0.1.4 // indirect
 	github.com/fjl/gencodec v0.1.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
