@@ -1370,7 +1370,11 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 			log.Trace("slash validator", "block hash", header.Hash(), "address", spoiledVal)
 			err = p.slash(spoiledVal, state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer)
 			if err != nil {
+				// Final Layer: a missing or mismatched slash system tx makes the
+				// block invalid; otherwise an out-of-turn producer could omit it
+				// and shield the in-turn validator from downtime slashing.
 				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal, "err", err)
+				return fmt.Errorf("slash validator %s: %w", spoiledVal, err)
 			}
 		}
 	}
@@ -1486,7 +1490,9 @@ func (p *Parlia) finalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 		if !signedRecently {
 			err = p.slash(spoiledVal, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer)
 			if err != nil {
-				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal)
+				// importers reject a block without the slash, so do not build one
+				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal, "err", err)
+				return nil, nil, fmt.Errorf("slash validator %s: %w", spoiledVal, err)
 			}
 		}
 	}
@@ -1706,6 +1712,10 @@ func (p *Parlia) Seal(chain consensus.ChainHeaderReader, block *types.Block, res
 			log.Error("Sign for the block header failed when sealing", "err", err)
 			return
 		}
+		if len(sig) != extraSeal {
+			log.Error("Invalid PQ seal length", "got", len(sig), "want", extraSeal)
+			return
+		}
 		copy(header.Extra[len(header.Extra)-extraSeal:], sig)
 
 		if p.shouldWaitForCurrentBlockProcess(chain, header, snap) {
@@ -1889,6 +1899,9 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) 
 		return nil, nil, err
 	}
 
+	if len(voteAddrSet) != len(valSet) {
+		return nil, nil, fmt.Errorf("validator/vote address length mismatch: %d != %d", len(valSet), len(voteAddrSet))
+	}
 	voteAddrMap := make(map[common.Address]*types.BLSPublicKey, len(valSet))
 	for i := 0; i < len(valSet); i++ {
 		voteAddrMap[valSet[i]] = &(voteAddrSet)[i]
