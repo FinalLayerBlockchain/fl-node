@@ -1277,6 +1277,9 @@ func (w *worker) generateWork(genParam *generateParams, witness bool) *newPayloa
 	if err != nil {
 		return &newPayloadResult{err: err}
 	}
+	if err := checkFinalLayerBlockSize(w.chainConfig, block); err != nil {
+		return &newPayloadResult{err: err}
+	}
 
 	return &newPayloadResult{
 		block:    block,
