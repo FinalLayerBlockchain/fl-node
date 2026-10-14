@@ -140,6 +140,15 @@ func (tx *Transaction) PQFrom() (common.Address, bool) {
 	return common.Address{}, false
 }
 
+// PQKey returns the scheme and public key of a PQ transaction without copying;
+// the slice must be treated as read-only (used by per-block pool scans).
+func (tx *Transaction) PQKey() (pq.Scheme, []byte, bool) {
+	if p, ok := tx.inner.(*PQTx); ok {
+		return pq.Scheme(p.Scheme), p.PubKey, true
+	}
+	return 0, nil, false
+}
+
 // PQAuth returns the scheme, public key and signature of a PQ transaction.
 func (tx *Transaction) PQAuth() (pq.Scheme, []byte, []byte, bool) {
 	if p, ok := tx.inner.(*PQTx); ok {

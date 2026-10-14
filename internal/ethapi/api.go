@@ -2188,8 +2188,12 @@ func (api *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash com
 
 // GetTransactionReceiptsByBlockNumber returns the transaction receipts for the given block number.
 func (api *TransactionAPI) GetTransactionReceiptsByBlockNumber(ctx context.Context, blockNr rpc.BlockNumber) ([]map[string]interface{}, error) {
-	blockNumber := uint64(blockNr.Int64())
-	blockHash := rawdb.ReadCanonicalHash(api.b.ChainDb(), blockNumber)
+	// resolve tags such as "latest" instead of casting them to huge numbers
+	header, err := api.b.HeaderByNumber(ctx, blockNr)
+	if err != nil || header == nil {
+		return nil, fmt.Errorf("block %v not found", blockNr)
+	}
+	blockNumber, blockHash := header.Number.Uint64(), header.Hash()
 
 	receipts, err := api.b.GetReceipts(ctx, blockHash)
 	if err != nil {
@@ -2286,12 +2290,21 @@ func (api *TransactionAPI) GetTransactionDataAndReceipt(ctx context.Context, has
 		"hash":             rpcTransaction.Hash.String(),
 		"input":            rpcTransaction.Input.String(),
 		"nonce":            rpcTransaction.Nonce.String(),
-		"to":               rpcTransaction.To.String(),
+		"to":               nil, // contract creation
 		"transactionIndex": rpcTransaction.TransactionIndex.String(),
 		"value":            rpcTransaction.Value.String(),
 		"v":                rpcTransaction.V.String(),
 		"r":                rpcTransaction.R.String(),
 		"s":                rpcTransaction.S.String(),
+	}
+	if rpcTransaction.To != nil {
+		txData["to"] = rpcTransaction.To.String()
+	}
+	if rpcTransaction.PQScheme != nil {
+		txData["pqScheme"] = rpcTransaction.PQScheme.String()
+		txData["pqAlgorithm"] = rpcTransaction.PQAlgorithm
+		txData["pqPublicKey"] = rpcTransaction.PQPublicKey.String()
+		txData["pqSignature"] = rpcTransaction.PQSignature.String()
 	}
 
 	result := map[string]interface{}{

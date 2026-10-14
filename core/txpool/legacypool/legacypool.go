@@ -1573,7 +1573,7 @@ func (pool *LegacyPool) truncateQueue() {
 func (pool *LegacyPool) dropRetiredPQKeys() {
 	var stale []common.Hash
 	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		scheme, pk, _, ok := tx.PQAuth()
+		scheme, pk, ok := tx.PQKey()
 		if !ok {
 			return true
 		}

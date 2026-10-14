@@ -334,6 +334,13 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	// flags would fork itself off the live chain, so refuse to run that way.
 	// Devnets that reuse the chain ID set FL_ALLOW_TEST_PARAMS=1.
 	if cc := backend.ChainConfig(); cc != nil && cc.ChainID != nil && cc.ChainID.Uint64() == 20261012 && os.Getenv("FL_ALLOW_TEST_PARAMS") != "1" {
+		for _, f := range []string{utils.OverridePassedForkTime.Name, utils.OverrideLorentz.Name, utils.OverrideMaxwell.Name,
+			utils.OverrideFermi.Name, utils.OverrideOsaka.Name, utils.OverrideMendel.Name, utils.OverridePasteur.Name,
+			utils.OverrideBPO1.Name, utils.OverrideBPO2.Name, utils.OverrideUBT.Name} {
+			if ctx.IsSet(f) {
+				utils.Fatalf("Final Layer mainnet does not allow --%s (it rewrites consensus fork times)", f)
+			}
+		}
 		if params.BreatheBlockInterval != 24*3600 || params.FixedTurnLength != 0 {
 			utils.Fatalf("Final Layer mainnet requires the default breathe interval (86400) and no fixed turn length; got %d and %d (fltest build or override flag)",
 				params.BreatheBlockInterval, params.FixedTurnLength)

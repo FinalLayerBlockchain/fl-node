@@ -683,6 +683,11 @@ func (s *Ethereum) updateNodeID(parlia *parlia.Parlia) error {
 	}
 	if removed {
 		nonce++
+		// a wildcard removal clears every registered ID, so re-adds must not be
+		// filtered against the pre-removal set
+		if len(s.config.EVNNodeIDsToRemove) == 1 && s.config.EVNNodeIDsToRemove[0] == (enode.ID{}) {
+			registeredSet = map[enode.ID]struct{}{}
+		}
 	}
 
 	// Handle additions

@@ -565,6 +565,16 @@ func (p *Parlia) VerifyUnsealedHeader(chain consensus.ChainHeaderReader, header 
 		}
 	}
 
+	// Final Layer: these fields are not in the seal preimage (EncodeSigHeader)
+	// and Parlia never sets them, so a non-nil value would let anyone relaying a
+	// block change its hash without invalidating the seal.
+	if header.BlockAccessListHash != nil {
+		return fmt.Errorf("invalid BlockAccessListHash, have %#x, expected nil", *header.BlockAccessListHash)
+	}
+	if header.SlotNumber != nil {
+		return fmt.Errorf("invalid SlotNumber, have %d, expected nil", *header.SlotNumber)
+	}
+
 	// All basic checks passed, verify cascading fields
 	return p.verifyCascadingFields(chain, header, parents)
 }
