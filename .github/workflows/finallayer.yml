@@ -17,4 +17,4 @@ jobs:
       - name: Build geth and flpq
         run: go build ./cmd/geth ./cmd/flpq
       - name: Final Layer tests
-        run: build/finallayer/test.sh
+        run: bash build/finallayer/test.sh
