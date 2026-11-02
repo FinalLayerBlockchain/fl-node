@@ -12,9 +12,11 @@ FILES=(
   consensus/parlia/finallayer_size_test.go
   consensus/parlia/pq_signer_test.go
   consensus/parlia/system_receipt_pq_test.go
+  core/fee_currency_test.go
   core/finallayer_limits_test.go
   core/forkchoice_finallayer_test.go
   core/pq_auth_test.go
+  core/txpool/legacypool/fee_currency_test.go
   core/txpool/legacypool/pq_rotation_test.go
   core/txpool/validation_pq_test.go
   core/types/receipt_pq_test.go

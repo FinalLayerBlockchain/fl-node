@@ -1674,6 +1674,7 @@ type RPCTransaction struct {
 	PQAlgorithm string          `json:"pqAlgorithm,omitempty"`
 	PQPublicKey hexutil.Bytes   `json:"pqPublicKey,omitempty"`
 	PQSignature hexutil.Bytes   `json:"pqSignature,omitempty"`
+	FeeCurrency *common.Address `json:"feeCurrency,omitempty"`
 }
 
 // newRPCTransaction returns a transaction that will serialize to the RPC
@@ -1724,6 +1725,7 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		result.PQAlgorithm = pq.Name(scheme)
 		result.PQPublicKey = pk
 		result.PQSignature = sig
+		result.FeeCurrency = tx.FeeCurrency()
 
 	case types.LegacyTxType:
 		// if a legacy transaction has an EIP-155 chain id, include it explicitly

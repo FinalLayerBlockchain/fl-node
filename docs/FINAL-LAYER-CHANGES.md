@@ -10,7 +10,7 @@ git diff --stat $BASE HEAD
 git diff $BASE HEAD -- <path>
 ```
 
-68 files changed, about 4,750 lines added and 250 removed (tests included).
+79 files changed, about 6,000 lines added and 255 removed (tests included).
 
 ## Threat model in one paragraph
 
@@ -91,6 +91,28 @@ changes.
 | `internal/ethapi/api.go`, `api_finallayer.go` | Consensus reads use a fixed gas budget independent of `--rpc.gascap`; not exposed over RPC; PQ fields in RPC output |
 | `cmd/geth/config.go` | Refuses test parameters and fork-override flags on chain `20261012` |
 | `params/fltest_breathe.go` | Test-only build tag (`-tags fltest`): breathe every 10 minutes for devnets; never in releases |
+
+## 7. Fee currencies (gas paid in a listed ERC-20)
+
+A PQ transaction may set `FeeCurrency` to an ERC-20 listed in the fee currency directory, a
+governance-owned genesis contract at `0x...5052`. Gas prices stay in FL wei; the node converts the
+charge at the directory's rate. The whole gas limit is debited in the token before execution; after
+it the unused part is refunded to the sender and the fee goes to the block producer. Directory
+lookups, debits and credits are EVM calls from `address(0)` with fixed gas budgets, so a listed
+token cannot stall block production. FL stays the default and universal gas currency. Listing,
+rate and price-source rules live in the genesis contracts (`fl-genesis-contracts`, `contracts/finallayer`).
+
+| File | Change |
+| --- | --- |
+| `core/fee_currency.go` | Directory lookup, token debit before execution, refund and producer credit after, fixed gas budgets |
+| `core/state_transition.go` | `buyGas` / settlement in the fee currency; token intrinsic gas from the directory added once |
+| `core/state/journal.go`, `core/state/statedb.go` | `Prepare` is journaled so a failed credit reverts cleanly instead of leaving partial state |
+| `core/types/tx_pq.go`, `transaction.go`, `transaction_marshalling.go` | `FeeCurrency` field on type `0x07`, included in the signing hash; `Cost()` is the value only for token-paid transactions |
+| `core/txpool/legacypool/fee_currency.go`, `legacypool.go` | One pooled fee currency transaction per sender; dry-run of debit and credit at admission; re-checked on every new head (dropped if balance spent, token delisted or price expired) |
+| `consensus/parlia/parlia.go` | A fee currency transaction is never treated as a system transaction |
+| `eth/gasestimator/gasestimator.go`, `internal/ethapi/*.go` | Gas estimation and RPC arguments carry `feeCurrency` |
+| `cmd/flpq/main.go` | `--fee-currency` flag |
+| `core/fee_currency_test.go`, `core/txpool/legacypool/fee_currency_test.go`, `core/testdata/feecurrency/` | Tests against the compiled directory, fixed-rate oracle and test token bytecode |
 
 ## Known limitations and open items
 

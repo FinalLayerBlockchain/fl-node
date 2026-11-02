@@ -618,6 +618,9 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 	if err := txpool.ValidateTransactionWithState(tx, pool.signer, opts); err != nil {
 		return err
 	}
+	if err := pool.validateFeeCurrency(tx, sender); err != nil {
+		return err
+	}
 	return pool.validateAuth(tx)
 }
 
@@ -1606,6 +1609,17 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
 		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit)
+		// Final Layer: drop a fee currency transaction the sender can no longer
+		// pay for (token balance spent, token delisted or price expired).
+		for _, tx := range list.Flatten() {
+			if tx.FeeCurrency() == nil || pool.checkFeeCurrencyState(tx, addr) == nil {
+				continue
+			}
+			if removed, invs := list.Remove(tx); removed {
+				drops = append(drops, tx)
+				invalids = append(invalids, invs...)
+			}
+		}
 		for _, tx := range drops {
 			hash := tx.Hash()
 			pool.all.Remove(hash)

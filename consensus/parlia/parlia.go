@@ -302,6 +302,10 @@ func (p *Parlia) IsSystemTransaction(tx *types.Transaction, header *types.Header
 	if tx.EffectiveGasPriceForBSC().Sign() != 0 {
 		return false, nil
 	}
+	// Final Layer: system transactions never pay gas in a fee currency.
+	if tx.FeeCurrency() != nil {
+		return false, nil
+	}
 	sender, err := types.Sender(p.signer, tx)
 	if err != nil {
 		return false, errors.New("UnAuthorized transaction")

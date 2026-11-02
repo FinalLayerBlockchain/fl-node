@@ -35,6 +35,11 @@ type PQTx struct {
 	From       common.Address
 	Scheme     uint8
 
+	// FeeCurrency, when set, names an ERC-20 listed in the fee currency
+	// directory that pays for gas instead of FL. Gas prices stay in FL wei;
+	// the node converts the charge at the directory's exchange rate.
+	FeeCurrency *common.Address `rlp:"nil"`
+
 	// Authorization
 	PubKey    []byte
 	Signature []byte
@@ -42,19 +47,20 @@ type PQTx struct {
 
 func (tx *PQTx) copy() TxData {
 	cpy := &PQTx{
-		Nonce:      tx.Nonce,
-		To:         copyAddressPtr(tx.To),
-		Data:       common.CopyBytes(tx.Data),
-		Gas:        tx.Gas,
-		AccessList: make(AccessList, len(tx.AccessList)),
-		Value:      new(big.Int),
-		ChainID:    new(big.Int),
-		GasTipCap:  new(big.Int),
-		GasFeeCap:  new(big.Int),
-		From:       tx.From,
-		Scheme:     tx.Scheme,
-		PubKey:     common.CopyBytes(tx.PubKey),
-		Signature:  common.CopyBytes(tx.Signature),
+		Nonce:       tx.Nonce,
+		To:          copyAddressPtr(tx.To),
+		Data:        common.CopyBytes(tx.Data),
+		Gas:         tx.Gas,
+		AccessList:  make(AccessList, len(tx.AccessList)),
+		Value:       new(big.Int),
+		ChainID:     new(big.Int),
+		GasTipCap:   new(big.Int),
+		GasFeeCap:   new(big.Int),
+		From:        tx.From,
+		Scheme:      tx.Scheme,
+		FeeCurrency: copyAddressPtr(tx.FeeCurrency),
+		PubKey:      common.CopyBytes(tx.PubKey),
+		Signature:   common.CopyBytes(tx.Signature),
 	}
 	copy(cpy.AccessList, tx.AccessList)
 	if tx.Value != nil {
@@ -129,6 +135,7 @@ func (tx *PQTx) sigHash(chainID *big.Int) common.Hash {
 			tx.AccessList,
 			tx.From,
 			tx.Scheme,
+			tx.FeeCurrency,
 		})
 }
 
@@ -138,6 +145,14 @@ func (tx *Transaction) PQFrom() (common.Address, bool) {
 		return p.From, true
 	}
 	return common.Address{}, false
+}
+
+// FeeCurrency returns the token paying for gas, or nil when gas is paid in FL.
+func (tx *Transaction) FeeCurrency() *common.Address {
+	if p, ok := tx.inner.(*PQTx); ok {
+		return copyAddressPtr(p.FeeCurrency)
+	}
+	return nil
 }
 
 // PQKey returns the scheme and public key of a PQ transaction without copying;

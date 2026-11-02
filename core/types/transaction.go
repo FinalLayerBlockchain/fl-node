@@ -318,7 +318,13 @@ func (tx *Transaction) To() *common.Address {
 }
 
 // Cost returns (gas * gasPrice) + (blobGas * blobGasPrice) + value.
+//
+// Final Layer: a transaction paying gas in a fee currency only spends its value
+// in FL; the gas is charged in the token.
 func (tx *Transaction) Cost() *big.Int {
+	if p, ok := tx.inner.(*PQTx); ok && p.FeeCurrency != nil {
+		return new(big.Int).Set(tx.inner.value())
+	}
 	// Avoid allocating copies via tx.GasPrice()/tx.Value(); use inner values directly.
 	total := new(big.Int).SetUint64(tx.inner.gas())
 	total.Mul(total, tx.inner.gasPrice())

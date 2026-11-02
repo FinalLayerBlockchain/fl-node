@@ -20,6 +20,8 @@ bsc-geth based client is the only supported Final Layer node.
 | Transaction type | `0x07` (PQ transaction, the only accepted type) |
 | PQ key registry | `0x0000000000000000000000000000000000005051` |
 | PQ verify precompile | `0x0000000000000000000000000000000000000f01` |
+| Fee currency directory | `0x0000000000000000000000000000000000005052` (gas payable in governance-listed ERC-20s; FL always accepted) |
+| Genesis hash (current network) | `0x7112dbb0c7524c3c0b15a04be6d69ea1c8976309bcaa02f9b132ff385fbe69d2` |
 | Native coin | FL, 5,000,000,000 at genesis |
 | Staking inflation | minted once per day in the breathe block, paid through StakeHub |
 

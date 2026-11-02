@@ -252,6 +252,16 @@ func (j *journal) accessListAddSlot(addr common.Address, slot common.Hash) {
 	})
 }
 
+// accessListReset records that the access list was replaced (Prepare).
+func (j *journal) accessListReset(prev *accessList) {
+	j.append(accessListResetChange{prev: prev})
+}
+
+// transientStorageReset records that transient storage was replaced (Prepare).
+func (j *journal) transientStorageReset(prev transientStorage) {
+	j.append(transientStorageResetChange{prev: prev})
+}
+
 type (
 	// Changes to the account trie.
 	createObjectChange struct {
@@ -311,6 +321,19 @@ type (
 	transientStorageChange struct {
 		account       common.Address
 		key, prevalue common.Hash
+	}
+
+	// Final Layer: Prepare replaces the whole access list and transient
+	// storage at the start of a transaction. A fee currency transaction makes
+	// journaled state changes before Prepare (the token debit) and can still
+	// fail after it (the token credit), so the miner's revert must be able to
+	// cross Prepare: these entries restore the replaced structures so that the
+	// earlier access list entries unwind against the list they were made on.
+	accessListResetChange struct {
+		prev *accessList
+	}
+	transientStorageResetChange struct {
+		prev transientStorage
 	}
 )
 
@@ -522,4 +545,28 @@ func (ch accessListAddSlotChange) copy() journalEntry {
 		address: ch.address,
 		slot:    ch.slot,
 	}
+}
+
+func (ch accessListResetChange) revert(s *StateDB) {
+	s.accessList = ch.prev
+}
+
+func (ch accessListResetChange) dirtied() (common.Address, bool) {
+	return common.Address{}, false
+}
+
+func (ch accessListResetChange) copy() journalEntry {
+	return accessListResetChange{prev: ch.prev.Copy()}
+}
+
+func (ch transientStorageResetChange) revert(s *StateDB) {
+	s.transientStorage = ch.prev
+}
+
+func (ch transientStorageResetChange) dirtied() (common.Address, bool) {
+	return common.Address{}, false
+}
+
+func (ch transientStorageResetChange) copy() journalEntry {
+	return transientStorageResetChange{prev: ch.prev.Copy()}
 }

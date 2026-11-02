@@ -55,6 +55,7 @@ type txJSON struct {
 	PQScheme    *hexutil.Uint64 `json:"pqScheme,omitempty"`
 	PQPublicKey *hexutil.Bytes  `json:"pqPublicKey,omitempty"`
 	PQSignature *hexutil.Bytes  `json:"pqSignature,omitempty"`
+	FeeCurrency *common.Address `json:"feeCurrency,omitempty"`
 
 	// Blob transaction sidecar encoding:
 	Blobs       []kzg4844.Blob       `json:"blobs,omitempty"`
@@ -139,6 +140,7 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.PQScheme = (*hexutil.Uint64)(&scheme)
 		enc.PQPublicKey = (*hexutil.Bytes)(&itx.PubKey)
 		enc.PQSignature = (*hexutil.Bytes)(&itx.Signature)
+		enc.FeeCurrency = copyAddressPtr(itx.FeeCurrency)
 		zero := new(big.Int)
 		enc.V, enc.R, enc.S = (*hexutil.Big)(zero), (*hexutil.Big)(zero), (*hexutil.Big)(zero)
 
@@ -356,6 +358,7 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		itx.Scheme = uint8(*dec.PQScheme)
 		itx.PubKey = *dec.PQPublicKey
 		itx.Signature = *dec.PQSignature
+		itx.FeeCurrency = dec.FeeCurrency
 
 	case DynamicFeeTxType:
 		var itx DynamicFeeTx

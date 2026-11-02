@@ -231,6 +231,10 @@ type Message struct {
 	PQScheme pq.Scheme
 	PQPubKey []byte
 
+	// FeeCurrency, when set, is the listed ERC-20 that pays for gas (prices
+	// stay in FL wei and are converted at the directory rate).
+	FeeCurrency *common.Address
+
 	// When SkipNonceChecks is true, the message nonce is not checked against the
 	// account nonce in state.
 	//
@@ -299,6 +303,7 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 		msg.PQScheme = scheme
 		msg.PQPubKey = pk
 	}
+	msg.FeeCurrency = tx.FeeCurrency()
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
 	if baseFee != nil {
 		effectiveGasPrice := new(big.Int).Add(baseFee, txGasTipCap)
@@ -358,6 +363,13 @@ type stateTransition struct {
 	gasRemaining  vm.GasBudget
 	state         vm.StateDB
 	evm           *vm.EVM
+
+	// Fee currency charge (only when msg.FeeCurrency is set).
+	feeInfo    *FeeCurrencyInfo
+	feeDebited *uint256.Int
+	// Storage refund counter growth caused by the token debit; excluded from
+	// the sender's refund (see buyGasInCurrency).
+	feeDebitRefund uint64
 }
 
 // newStateTransition initialises and returns a new state transition object.
@@ -379,6 +391,9 @@ func (st *stateTransition) to() common.Address {
 }
 
 func (st *stateTransition) buyGas() error {
+	if st.msg.FeeCurrency != nil {
+		return st.buyGasInCurrency()
+	}
 	mgval := new(uint256.Int).SetUint64(st.msg.GasLimit)
 	_, overflow := mgval.MulOverflow(mgval, st.msg.GasPrice)
 	if overflow {
@@ -442,6 +457,77 @@ func (st *stateTransition) buyGas() error {
 
 	st.state.SubBalance(st.msg.From, mgval, tracing.BalanceDecreaseGasBuy)
 	return nil
+}
+
+// buyGasInCurrency is buyGas for a transaction paying gas in a fee currency:
+// the token is debited gasLimit * gasPrice converted at the directory rate,
+// and FL pays only the value.
+func (st *stateTransition) buyGasInCurrency() error {
+	msg := st.msg
+	if len(msg.BlobHashes) > 0 {
+		return fmt.Errorf("%w: blob transactions cannot use a fee currency", ErrFeeCurrencyNotAllowed)
+	}
+	info, err := LookupFeeCurrency(st.evm, *msg.FeeCurrency)
+	if err != nil {
+		return err
+	}
+	mgval := new(uint256.Int).SetUint64(msg.GasLimit)
+	if _, overflow := mgval.MulOverflow(mgval, msg.GasPrice); overflow {
+		return fmt.Errorf("%w: address %v required balance exceeds 256 bits", ErrInsufficientFunds, msg.From.Hex())
+	}
+	debit, err := info.ToToken(mgval.ToBig())
+	if err != nil {
+		return err
+	}
+	if msg.Value != nil {
+		if have := st.state.GetBalance(msg.From); have.Cmp(msg.Value) < 0 {
+			return fmt.Errorf("%w: address %v have %v want %v", ErrInsufficientFunds, msg.From.Hex(), have, msg.Value)
+		}
+	}
+	if err := st.gp.SubGas(msg.GasLimit); err != nil {
+		return err
+	}
+	// Like any error after SubGas, a failed debit invalidates the transaction
+	// and the caller discards its state and gas pool changes.
+	refundBefore := st.state.GetRefund()
+	if err := debitFeeCurrency(st.evm, *msg.FeeCurrency, msg.From, debit, info.IntrinsicGas); err != nil {
+		return err
+	}
+	// Storage refunds earned inside the debit (the token clearing the sender's
+	// balance slot, for instance) are not the sender's to collect: the debit
+	// is paid for by the flat intrinsic gas, not metered against the sender.
+	// The counter itself is left alone (EIP-2200 may subtract the same refund
+	// again when the slot is refilled and must not go below zero); calcRefund
+	// excludes the amount instead.
+	if after := st.state.GetRefund(); after > refundBefore {
+		st.feeDebitRefund = after - refundBefore
+	}
+	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil {
+		st.evm.Config.Tracer.OnGasChange(0, msg.GasLimit, tracing.GasChangeTxInitialBalance)
+	}
+	st.gasRemaining = vm.NewGasBudget(msg.GasLimit)
+	st.initialBudget = st.gasRemaining.Copy()
+	st.feeInfo = info
+	st.feeDebited = debit
+	return nil
+}
+
+// settleCurrencyFee credits the token back after execution: the fee for the
+// gas used to the block producer, the rest of the debit to the sender.
+func (st *stateTransition) settleCurrencyFee() error {
+	fee := new(big.Int).SetUint64(st.gasUsed())
+	fee.Mul(fee, st.msg.GasPrice.ToBig())
+	tokenFee, err := st.feeInfo.ToToken(fee)
+	if err != nil {
+		return err
+	}
+	if tokenFee.Gt(st.feeDebited) { // cannot happen: gasUsed <= gasLimit and rounding is monotonic
+		tokenFee = new(uint256.Int).Set(st.feeDebited)
+	}
+	refund := new(uint256.Int).Sub(st.feeDebited, tokenFee)
+	return creditFeeCurrency(st.evm, *st.msg.FeeCurrency,
+		[]common.Address{st.msg.From, st.evm.Context.Coinbase},
+		[]*uint256.Int{refund, tokenFee}, st.feeInfo.IntrinsicGas)
 }
 
 func (st *stateTransition) preCheck() error {
@@ -601,6 +687,13 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		}
 		cost.RegularGas += authGas
 	}
+	// Final Layer: a fee currency charges its intrinsic gas once.
+	if st.feeInfo != nil {
+		if cost.RegularGas+st.feeInfo.IntrinsicGas < cost.RegularGas {
+			return nil, ErrGasUintOverflow
+		}
+		cost.RegularGas += st.feeInfo.IntrinsicGas
+	}
 	prior, sufficient := st.gasRemaining.Charge(cost)
 	if !sufficient {
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining.RegularGas, cost.RegularGas)
@@ -736,8 +829,12 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 
 	fee := new(uint256.Int).SetUint64(st.gasUsed())
 	fee.Mul(fee, effectiveTip)
-	// consensus engine is parlia
-	if st.evm.ChainConfig().IsInBSC() {
+	if st.feeInfo != nil {
+		// Final Layer: gas was paid in a fee currency (refund + fee in the token).
+		if err := st.settleCurrencyFee(); err != nil {
+			return nil, err
+		}
+	} else if st.evm.ChainConfig().IsInBSC() {
 		st.state.AddBalance(consensus.SystemAddress, fee, tracing.BalanceIncreaseRewardTransactionFee)
 		// add extra blob fee reward
 		if rules.IsCancun {
@@ -838,8 +935,17 @@ func (st *stateTransition) calcRefund() vm.GasBudget {
 		// After EIP-3529: refunds are capped to gasUsed / 5
 		refund = st.gasUsed() / params.RefundQuotientEIP3529
 	}
-	if refund > st.state.GetRefund() {
-		refund = st.state.GetRefund()
+	// Final Layer: refunds earned by the fee currency debit are not the
+	// sender's (clamped: the counter may since have been reduced by EIP-2200
+	// when the cleared slot was refilled).
+	earned := st.state.GetRefund()
+	if earned >= st.feeDebitRefund {
+		earned -= st.feeDebitRefund
+	} else {
+		earned = 0
+	}
+	if refund > earned {
+		refund = earned
 	}
 	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && refund > 0 {
 		st.evm.Config.Tracer.OnGasChange(st.gasRemaining.RegularGas, st.gasRemaining.RegularGas+refund, tracing.GasChangeTxRefunds)
@@ -850,6 +956,9 @@ func (st *stateTransition) calcRefund() vm.GasBudget {
 // returnGas returns ETH for remaining gas,
 // exchanged at the original rate.
 func (st *stateTransition) returnGas() {
+	if st.feeInfo != nil {
+		return // refunded in the token by settleCurrencyFee
+	}
 	remaining := uint256.NewInt(st.gasRemaining.RegularGas)
 	remaining.Mul(remaining, st.msg.GasPrice)
 	st.state.AddBalance(st.msg.From, remaining, tracing.BalanceIncreaseGasReturn)

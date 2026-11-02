@@ -70,6 +70,9 @@ type TransactionArgs struct {
 
 	// For SetCodeTxType
 	AuthorizationList []types.SetCodeAuthorization `json:"authorizationList"`
+
+	// Final Layer: ERC-20 listed in the fee currency directory that pays for gas.
+	FeeCurrency *common.Address `json:"feeCurrency,omitempty"`
 }
 
 // from retrieves the transaction sender address.
@@ -495,6 +498,7 @@ func (args *TransactionArgs) ToMessage(baseFee *big.Int, skipNonceCheck bool) *c
 		BlobGasFeeCap:         blobFeeCap,
 		BlobHashes:            args.BlobHashes,
 		SetCodeAuthorizations: args.AuthorizationList,
+		FeeCurrency:           args.FeeCurrency,
 		SkipNonceChecks:       skipNonceCheck,
 		SkipTransactionChecks: true,
 	}

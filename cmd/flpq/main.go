@@ -37,7 +37,8 @@ Queries
   flpq registry <rpc> <address>                   show the key registry entry (rotation state)
   flpq call <rpc> <to> <datahex>                  eth_call
 
-Transactions (add --from <address> to sign for an account that rotated its key)
+Transactions (add --from <address> to sign for an account that rotated its key;
+add --fee-currency <token> to pay gas in a listed ERC-20 instead of FL)
   flpq send <rpc> <key.json> <to> <amountFL>
   flpq tx <rpc> <key.json> <to|create> <valueFL> <datahex> [gas]
   flpq rotate <rpc> <currentKey.json> <newKey.json>
@@ -113,10 +114,23 @@ func main() {
 	}
 }
 
+// feeCurrency is set by --fee-currency <token>: every transaction this run
+// sends pays gas in that listed ERC-20 instead of FL.
+var feeCurrency *common.Address
+
 func extractFrom(in []string) ([]string, *common.Address, error) {
 	var out []string
 	var from *common.Address
 	for i := 0; i < len(in); i++ {
+		if in[i] == "--fee-currency" && i+1 < len(in) {
+			a, err := parseAddr(in[i+1])
+			if err != nil {
+				return nil, nil, err
+			}
+			feeCurrency = &a
+			i++
+			continue
+		}
 		if in[i] == "--from" && i+1 < len(in) {
 			a, err := parseAddr(in[i+1])
 			if err != nil {
@@ -309,7 +323,20 @@ func sendPQ(rpc string, key *pq.PrivateKey, from *common.Address, to *common.Add
 		return err
 	}
 	if gas == 0 {
-		est, err := c.EstimateGas(ctx, ethereum.CallMsg{From: sender, To: to, Value: value, Data: data})
+		var est uint64
+		if feeCurrency == nil {
+			est, err = c.EstimateGas(ctx, ethereum.CallMsg{From: sender, To: to, Value: value, Data: data})
+		} else {
+			// ethclient's CallMsg has no fee currency; the estimate then
+			// includes the token's intrinsic gas.
+			arg := map[string]interface{}{"from": sender, "value": (*hexutil.Big)(value), "data": hexutil.Bytes(data), "feeCurrency": feeCurrency}
+			if to != nil {
+				arg["to"] = to
+			}
+			var hex hexutil.Uint64
+			err = c.Client().CallContext(ctx, &hex, "eth_estimateGas", arg)
+			est = uint64(hex)
+		}
 		if err != nil {
 			return fmt.Errorf("gas estimation failed: %w", err)
 		}
@@ -326,6 +353,8 @@ func sendPQ(rpc string, key *pq.PrivateKey, from *common.Address, to *common.Add
 		Data:      data,
 		From:      sender,
 		Scheme:    uint8(key.Scheme),
+
+		FeeCurrency: feeCurrency,
 	})
 	signed, err := types.SignPQTx(tx, types.LatestSignerForChainID(chainID), key)
 	if err != nil {
@@ -448,6 +477,11 @@ func cmdRotate(args []string, from *common.Address) error {
 	}
 	to := pq.RegistryAddress
 	fmt.Printf("rotating %s to the key of %s (%s)\n", acct.Hex(), args[2], pq.Name(next.Scheme))
+	if feeCurrency != nil {
+		// room for the token's intrinsic gas (directory maximum); unused gas
+		// is refunded in the token
+		gas += 200_000
+	}
 	return sendPQ(args[0], cur, &acct, &to, new(big.Int), data, gas, &nonce)
 }
 

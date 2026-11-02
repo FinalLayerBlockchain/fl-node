@@ -1506,8 +1506,11 @@ func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, d
 		panic("eip2929 and eip4762 are both activated")
 	}
 	if rules.IsEIP2929 {
-		// Clear out any leftover from previous executions
+		// Clear out any leftover from previous executions. The replacement is
+		// journaled so a revert across Prepare (a fee currency transaction
+		// whose token credit fails after execution) unwinds correctly.
 		al := newAccessList()
+		s.journal.accessListReset(s.accessList)
 		s.accessList = al
 
 		al.AddAddress(sender)
@@ -1529,6 +1532,7 @@ func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, d
 		}
 	}
 	// Reset transient storage at the beginning of transaction execution
+	s.journal.transientStorageReset(s.transientStorage)
 	s.transientStorage = newTransientStorage()
 
 	if rules.IsAmsterdam {

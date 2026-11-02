@@ -22,6 +22,8 @@ Of most interest:
 - minting or redirecting staking inflation
 - bypassing the key registry or the 1.5 MB block size cap
 - reviving any classical signature path (ecrecover, BLS, builder bids)
+- paying gas in a fee currency without the token being debited, or a listed token stalling or
+  splitting block production
 
 ## Audit reports
 

@@ -78,8 +78,31 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 	} else {
 		feeCap = uint256.NewInt(0)
 	}
+	// Final Layer: gas paid in a fee currency is limited by the token balance,
+	// not the FL balance (otherwise the first probe at the block gas limit
+	// fails on the token debit for any caller that supplies a gas price).
+	if feeCap.BitLen() != 0 && call.FeeCurrency != nil {
+		fevm := core.NewFeeCurrencyEVM(opts.Config, opts.Header, opts.State.Copy())
+		info, err := core.LookupFeeCurrency(fevm, *call.FeeCurrency)
+		if err != nil {
+			return 0, nil, err
+		}
+		have, err := core.FeeCurrencyBalance(fevm, *call.FeeCurrency, call.From)
+		if err != nil {
+			return 0, nil, fmt.Errorf("%w: balanceOf: %v", core.ErrFeeCurrencyNotAllowed, err)
+		}
+		// FL wei the token balance covers, then gas at the fee cap (floored,
+		// so the rounded-up debit of that gas never exceeds the balance).
+		affordable := new(big.Int).Mul(have, info.Denominator)
+		affordable.Div(affordable, info.Numerator)
+		allowance := affordable.Div(affordable, feeCap.ToBig())
+		if allowance.IsUint64() && hi > allowance.Uint64() {
+			log.Debug("Gas estimation capped by limited token funds", "original", hi, "token", *call.FeeCurrency, "balance", have, "fundable", allowance)
+			hi = allowance.Uint64()
+		}
+	}
 	// Recap the highest gas limit with account's available balance.
-	if feeCap.BitLen() != 0 {
+	if feeCap.BitLen() != 0 && call.FeeCurrency == nil {
 		balance := opts.State.GetBalance(call.From).Clone()
 
 		available := balance
